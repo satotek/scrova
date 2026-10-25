@@ -9,6 +9,9 @@ struct RecentScrobbleRow: View {
     var artworkSize: CGFloat = 44
     var titleFont: Font = .callout.weight(.medium)
     var detailFont: Font = .caption
+    /// Set where the row has to fit a fixed space (Now playing); the album is
+    /// dropped and text truncates there, while the history keeps full text.
+    var lineLimit: Int? = nil
 
     @State private var artwork: CGImage?
 
@@ -18,18 +21,21 @@ struct RecentScrobbleRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.track.title)
                     .font(titleFont)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(lineLimit)
+                    .fixedSize(horizontal: false, vertical: lineLimit == nil)
                 if !record.track.artist.isEmpty {
                     Text(record.track.artist)
                         .font(detailFont)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(lineLimit)
+                    .fixedSize(horizontal: false, vertical: lineLimit == nil)
                 }
-                if let album = record.track.album, !album.isEmpty {
+                if lineLimit == nil, let album = record.track.album, !album.isEmpty {
                     Text(album)
                         .font(detailFont)
                         .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(lineLimit)
+                    .fixedSize(horizontal: false, vertical: lineLimit == nil)
                 }
                 HStack(spacing: 6) {
                     Text(record.startedAt, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))

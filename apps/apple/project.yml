@@ -40,6 +40,17 @@ targets:
     dependencies:
       - package: ScrovaKit
         product: ScrovaKit
+    # The policy and licence report live outside this project so the docs and
+    # generated Rust data stay the single source of truth. Copy them in at build.
+    preBuildScripts:
+      - name: Bundle shared documents
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          resources="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          mkdir -p "$resources"
+          cp "${SRCROOT}/../../docs/privacy-policy.md" "$resources/privacy-policy.md"
+          cp "${SRCROOT}/../common/licenses-rust.json" "$resources/licenses-rust.json"
     configFiles:
       Debug: Config/Base.xcconfig
       Release: Config/Base.xcconfig
@@ -74,6 +85,17 @@ targets:
     dependencies:
       - package: ScrovaKit
         product: ScrovaKit
+    # The policy and licence report live outside this project so the docs and
+    # generated Rust data stay the single source of truth. Copy them in at build.
+    preBuildScripts:
+      - name: Bundle shared documents
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          resources="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          mkdir -p "$resources"
+          cp "${SRCROOT}/../../docs/privacy-policy.md" "$resources/privacy-policy.md"
+          cp "${SRCROOT}/../common/licenses-rust.json" "$resources/licenses-rust.json"
     configFiles:
       Debug: Config/Base.xcconfig
       Release: Config/Base.xcconfig
