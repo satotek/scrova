@@ -427,3 +427,41 @@ fn joining_midway_credit_is_capped_by_duration() {
     run(&mut engine, [ev(&t, PlaybackState::Paused, 500, 0)]);
     assert_eq!(engine.progress(SOURCE).unwrap().played, secs(200));
 }
+
+#[test]
+fn joining_past_the_threshold_scrobbles_without_another_event() {
+    let mut engine = ScrobbleEngine::default();
+    let t = track("a", Some(200));
+    let out = run(&mut engine, [ev(&t, PlaybackState::Paused, 150, 0)]);
+    assert_eq!(scrobbles(&out).len(), 1);
+    assert!(engine.progress(SOURCE).unwrap().scrobbled);
+}
+
+#[test]
+fn track_change_does_not_credit_a_stale_playhead() {
+    let mut engine = ScrobbleEngine::default();
+    let a = track("a", Some(200));
+    let b = track("b", Some(200));
+    let mut events = play_through(&a, 0, 150, 0, 5);
+    // The player reports b's metadata with a's position for a moment.
+    events.push(ev(&b, PlaybackState::Playing, 150, 152));
+    events.push(ev(&b, PlaybackState::Playing, 3, 155));
+    let out = run(&mut engine, events);
+    let s = scrobbles(&out);
+    assert_eq!(s.len(), 1, "only a: {s:?}");
+    assert_eq!(s[0].track.title, "Title a");
+}
+
+#[test]
+fn metadata_filled_in_stages_stays_one_play() {
+    let mut engine = ScrobbleEngine::default();
+    let mut bare = track("a", None);
+    bare.source_track_id = None;
+    bare.album = None;
+    let mut full = track("a", Some(200));
+    full.source_track_id = None;
+    let mut events = vec![ev(&bare, PlaybackState::Playing, 0, 0)];
+    events.extend(play_through(&full, 3, 120, 3, 5));
+    let out = run(&mut engine, events);
+    assert_eq!(scrobbles(&out).len(), 1);
+}

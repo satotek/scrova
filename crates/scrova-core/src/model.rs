@@ -33,12 +33,10 @@ impl Track {
     pub(crate) fn same_track_as(&self, other: &Track) -> bool {
         match (&self.source_track_id, &other.source_track_id) {
             (Some(a), Some(b)) => a == b,
-            _ => {
-                self.title == other.title
-                    && self.artist == other.artist
-                    && self.album == other.album
-                    && self.duration == other.duration
-            }
+            // Album and duration are left out: players fill metadata in
+            // stages (title first, album and length a moment later), and
+            // treating each stage as a new track splits one play in several.
+            _ => self.title == other.title && self.artist == other.artist,
         }
     }
 }

@@ -95,6 +95,9 @@ impl ScrobbleEngine {
 
     pub fn handle(&mut self, event: PlaybackEvent) -> Vec<EngineOutput> {
         let mut outputs = Vec::new();
+        // Only the first observation of a player is a join; a session that
+        // follows another one started while we were watching.
+        let joining = !self.sessions.contains_key(&event.source);
 
         if let Some(mut session) = self.sessions.remove(&event.source) {
             // Out-of-order delivery would make elapsed time negative; the newer
@@ -128,6 +131,12 @@ impl ScrobbleEngine {
                         source: event.source.clone(),
                     });
                 }
+                // Same track, possibly with metadata the player filled in
+                // since (album, length); the threshold and the scrobble should
+                // use the most complete version.
+                if let Some(track) = event.track {
+                    session.track = track;
+                }
                 session.state = event.state;
                 session.last_observed_at = event.observed_at;
                 session.last_position = event.position;
@@ -136,11 +145,16 @@ impl ScrobbleEngine {
             }
         }
 
-        self.start_session(event, &mut outputs);
+        self.start_session(event, joining, &mut outputs);
         outputs
     }
 
-    fn start_session(&mut self, event: PlaybackEvent, outputs: &mut Vec<EngineOutput>) {
+    fn start_session(
+        &mut self,
+        event: PlaybackEvent,
+        joining: bool,
+        outputs: &mut Vec<EngineOutput>,
+    ) {
         let Some(track) = event.track else { return };
         if event.state == PlaybackState::Stopped {
             return;
@@ -158,8 +172,14 @@ impl ScrobbleEngine {
         // The start time above already assumes continuous playback; leaving
         // the listening time at zero would contradict it, and on iOS, where
         // opening the app mid-song is normal, most tracks would never qualify.
+        //
+        // A track change while observing is not a join. Players can still
+        // report the previous track's position with the new metadata (seen
+        // with YouTube Music on Android), and crediting it would scrobble the
+        // new track the moment it starts.
         let played = event
             .position
+            .filter(|_| joining)
             .map(|position| track.duration.map_or(position, |d| position.min(d)))
             .unwrap_or_default();
 
@@ -170,19 +190,20 @@ impl ScrobbleEngine {
             });
         }
 
-        self.sessions.insert(
-            event.source,
-            Session {
-                id: uuid::Uuid::new_v4().to_string(),
-                track,
-                started_at,
-                played,
-                scrobbled: false,
-                state: event.state,
-                last_observed_at: event.observed_at,
-                last_position: event.position,
-            },
-        );
+        let mut session = Session {
+            id: uuid::Uuid::new_v4().to_string(),
+            track,
+            started_at,
+            played,
+            scrobbled: false,
+            state: event.state,
+            last_observed_at: event.observed_at,
+            last_position: event.position,
+        };
+        // Joining past the threshold (credited from the playhead above) must
+        // scrobble now: a paused player may not send another event for hours.
+        self.scrobble_if_due(&mut session, &event.source, outputs);
+        self.sessions.insert(event.source, session);
     }
 
     /// Listening time to add for the interval since the previous observation,
