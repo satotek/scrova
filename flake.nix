@@ -73,6 +73,8 @@
               ];
             })
             pkgs.sqlite
+            # Used by scripts/generate-licenses.sh.
+            pkgs.jq
             pkgs.cargo-ndk
             pkgs.jdk21
             pkgs.gradle
