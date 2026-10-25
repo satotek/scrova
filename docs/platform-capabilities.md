@@ -98,11 +98,21 @@
 - `lastPlayedDate` の更新タイミング（再生開始時か終了時か）
 - Apple Music API recently played の件数上限の現行値
 
-## 4. Android（Phase 4 で調査）
+## 4. Android
 
-- `NotificationListenerService` の権限を得ると `MediaSessionManager.getActiveSessions` で
-  複数アプリの `MediaController` を取得できる、という前提で設計している（**未検証**）
-- 常駐には Foreground Service が必要になる見込み
+詳細と出典: `docs/research/android.md`
+
+- 通知へのアクセスを許可された `NotificationListenerService` の `ComponentName` で
+  `MediaSessionManager.getActiveSessions` を呼ぶと、全アプリの `MediaController` が取れる。
+  Pixel 11（Android 17）で YouTube Music の再生を読み、Last.fm に Scrobble できることを確認した
+- 許可されているあいだはシステムがサービスを bind し続けるので、別の foreground service は使っていない。
+  タスク一覧から消したあとや再起動後も動き続けるかは未確認
+- 位置は `PlaybackState.position` を `lastPositionUpdateTime` と再生速度で現在まで外挿する。
+  プレイヤーは再生中に通知を出し続けないので、再生中は 3 秒ごとに読み直してエンジンに渡す
+- Play ストア以外から入れたアプリは、通知へのアクセスが「制限付き設定」の後ろに隠れることがある
+- Session Key は Android Keystore の AES-GCM 鍵で暗号化し、DataStore で `noBackupFilesDir` に置く。
+  鍵はバックアップで復元されないので、アプリのバックアップは無効にしている
+- Rust の HTTP は Android では同梱の Mozilla ルート証明書を使う（OS の検証器は JNI での初期化が要るため）
 
 ## 5. Windows（Phase 5 で調査）
 

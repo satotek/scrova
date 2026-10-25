@@ -56,9 +56,14 @@ iOS はその直後に着手し、Android / Windows は FFI 境界を壊さな�
 
 ## Phase 4 — Android
 
-- [ ] `scrova-ffi` の Kotlin バインディング（`cdylib`）
-- [ ] `NotificationListenerService` + `MediaSessionManager` で複数アプリを監視
-- [ ] Jetpack Compose / Material 3
+- [x] `scrova-ffi` の Kotlin バインディング（`cdylib`、`scripts/build-android.sh`）
+- [x] `NotificationListenerService` + `MediaSessionManager` で複数アプリを監視
+- [x] Jetpack Compose / Material 3（Apple 版と同じ構成: アート、Scrobble の印つきシークバー、履歴カード）
+- [x] Last.fm ログイン（Custom Tabs + 自動検知）、Keystore での Session Key 保存、WorkManager での送信
+- [x] 実機での通し確認（Pixel 11 / Android 17、YouTube Music）
+- [ ] タスク一覧から消したあと・再起動後・Doze 中も監視が続くか
+- [ ] Spotify、Apple Music など他のプレイヤーのメタデータと位置の質
+- [ ] 同じ曲を別アプリや別端末で聴いたときの重複
 
 ## Phase 5 — Windows
 
