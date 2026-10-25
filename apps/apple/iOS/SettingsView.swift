@@ -1,4 +1,5 @@
 import MediaPlayer
+import MusicKit
 import ScrovaKit
 import SwiftUI
 import UIKit
@@ -99,6 +100,31 @@ struct SettingsView: View {
             }
             Button("Open Settings", action: openAppSettings)
 
+            LabeledContent("Apple Music listening history") {
+                Text(musicAuthorizationLabel)
+                    .foregroundStyle(.secondary)
+            }
+            switch model.musicAuthorizationStatus {
+            case .notDetermined:
+                Button("Allow access") {
+                    Task { await model.requestMusicAuthorization() }
+                }
+            case .denied, .restricted:
+                Button("Open Settings", action: openAppSettings)
+            case .authorized:
+                EmptyView()
+            @unknown default:
+                EmptyView()
+            }
+            Text("Lets Scrova find songs you streamed while it was closed.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let notice = model.listeningHistoryNotice {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             LabeledContent("Background App Refresh") {
                 Text(backgroundRefreshLabel)
                     .foregroundStyle(.secondary)
@@ -113,6 +139,16 @@ struct SettingsView: View {
 
     private var mediaLibraryLabel: String {
         switch model.libraryAuthorizationStatus {
+        case .authorized: "Allowed"
+        case .denied: "Denied"
+        case .restricted: "Restricted"
+        case .notDetermined: "Not asked yet"
+        @unknown default: "Unknown"
+        }
+    }
+
+    private var musicAuthorizationLabel: String {
+        switch model.musicAuthorizationStatus {
         case .authorized: "Allowed"
         case .denied: "Denied"
         case .restricted: "Restricted"

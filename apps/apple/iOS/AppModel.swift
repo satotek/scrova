@@ -1,5 +1,6 @@
 import AuthenticationServices
 import MediaPlayer
+import MusicKit
 import Observation
 import ScrovaKit
 import SwiftUI
@@ -26,7 +27,7 @@ final class AppModel {
     /// Shared by the History tab and the now-playing "Last scrobbled" row.
     let history: HistoryPager
 
-    private(set) var currentTrack: Track?
+    private(set) var currentTrack: ScrovaKit.Track?
     private(set) var artwork: UIImage?
     private(set) var tint: Color?
     private(set) var progress: SessionProgress?
@@ -41,6 +42,8 @@ final class AppModel {
     private(set) var setupFailure: String?
     private(set) var libraryDenied = false
     private(set) var libraryAuthorizationStatus: MPMediaLibraryAuthorizationStatus = MPMediaLibrary.authorizationStatus()
+    private(set) var musicAuthorizationStatus: MusicAuthorization.Status = MusicAuthorization.currentStatus
+    private(set) var listeningHistoryNotice: String?
     private(set) var backgroundRefreshStatus: UIBackgroundRefreshStatus = UIApplication.shared.backgroundRefreshStatus
 
     init() {
@@ -89,7 +92,18 @@ final class AppModel {
     func refreshPermissions() {
         libraryAuthorizationStatus = MPMediaLibrary.authorizationStatus()
         libraryDenied = libraryAuthorizationStatus == .denied || libraryAuthorizationStatus == .restricted
+        musicAuthorizationStatus = RecentlyPlayed.authorizationStatus
         backgroundRefreshStatus = UIApplication.shared.backgroundRefreshStatus
+    }
+
+    /// MusicKit is opt-in from Settings; fetching listening history without
+    /// permission would prompt at launch, which the recovery design avoids.
+    func requestMusicAuthorization() async {
+        let status = await RecentlyPlayed.requestAuthorization()
+        musicAuthorizationStatus = status
+        if status == .authorized {
+            await recoverHistory()
+        }
     }
 
     func setForeground(_ isForeground: Bool) {
@@ -164,20 +178,49 @@ final class AppModel {
     /// Queues plays that happened while Scrova was closed. Safe to repeat: Rust
     /// derives each recovered scrobble's ID from the track and start time.
     func recoverHistory() async {
-        guard let scrova, MPMediaLibrary.authorizationStatus() == .authorized, !isRecovering else { return }
+        guard let scrova, !isRecovering else { return }
         // Launch and the first foreground transition both ask; one scan suffices.
         isRecovering = true
         defer { isRecovering = false }
+
+        if MPMediaLibrary.authorizationStatus() == .authorized {
+            do {
+                let baseline = try scrova.libraryScannedAt(source: NowPlayingObserver.source)
+                // A large library takes a while to enumerate; keep it off the main actor.
+                let items = await Task.detached(priority: .utility) {
+                    LibraryHistory.items(baselineAt: baseline)
+                }.value
+                let report = try scrova.recoverLibraryHistory(source: NowPlayingObserver.source, items: items)
+                if report.queued > 0 { refreshQueue() }
+            } catch {
+                accountNotice = ScrovaSetup.describe(error)
+            }
+        }
+
+        // MusicKit covers streams outside the library; it must not be gated on
+        // media-library access, which is a separate permission.
+        await recoverRecentlyPlayed(scrova)
+    }
+
+    private func recoverRecentlyPlayed(_ scrova: Scrova) async {
+        musicAuthorizationStatus = RecentlyPlayed.authorizationStatus
+        guard musicAuthorizationStatus == .authorized else { return }
         do {
-            let baseline = try scrova.libraryScannedAt(source: NowPlayingObserver.source)
-            // A large library takes a while to enumerate; keep it off the main actor.
-            let items = await Task.detached(priority: .utility) {
-                LibraryHistory.items(baselineAt: baseline)
-            }.value
-            let report = try scrova.recoverLibraryHistory(source: NowPlayingObserver.source, items: items)
+            let items = try await RecentlyPlayed.fetch()
+            let hint = RecentlyPlayed.nowPlayingHint()
+            let report = try scrova.recoverRecentlyPlayed(
+                source: NowPlayingObserver.source,
+                items: items,
+                nowPlaying: hint.track,
+                nowPlayingPosition: hint.position,
+                nowPlayingIsPlaying: hint.isPlaying
+            )
             if report.queued > 0 { refreshQueue() }
+            listeningHistoryNotice = nil
         } catch {
-            accountNotice = ScrovaSetup.describe(error)
+            // A missing MusicKit app service or developer token surfaces here;
+            // keep the app running and let Settings explain the failure.
+            listeningHistoryNotice = "Apple Music listening history is unavailable: \(error.localizedDescription)"
         }
     }
 
@@ -259,3 +302,4 @@ final class AppModel {
         history.invalidate()
     }
 }
+

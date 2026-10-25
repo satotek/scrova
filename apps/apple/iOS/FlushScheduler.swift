@@ -1,8 +1,8 @@
 import BackgroundTasks
 import Foundation
 
-/// One `BGAppRefreshTask` that recovers missed plays, calls `flush()`, and
-/// schedules the next request.
+/// One `BGAppRefreshTask` that recovers missed library and recently played
+/// streaming history, calls `flush()`, and schedules the next request.
 /// Registration has to finish before `applicationDidFinishLaunching` returns,
 /// and a second registration of the same identifier kills the app.
 enum FlushScheduler {

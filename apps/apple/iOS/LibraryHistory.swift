@@ -3,8 +3,8 @@ import MediaPlayer
 import ScrovaKit
 
 /// Reads play counts from the media library so Rust can queue the plays that
-/// happened while Scrova was not running. Only library songs carry them;
-/// streamed tracks outside the library cannot be recovered this way.
+/// happened while Scrova was not running. Only library songs carry play counts;
+/// streams outside the library are covered by `RecentlyPlayed` instead.
 enum LibraryHistory {
     /// Plays older than this cannot be scrobbled anyway (Last.fm rejects them),
     /// so after the baseline there is no point in sending those songs.

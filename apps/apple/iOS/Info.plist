@@ -27,7 +27,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>Scrova reads the track playing in Music so it can scrobble what you listen to.</string>
+	<string>Scrova reads the track playing in Music and your Apple Music listening history so it can scrobble what you listen to.</string>
 	<key>ScrovaLastfmApiKey</key>
 	<string>$(LASTFM_API_KEY)</string>
 	<key>ScrovaLastfmSharedSecret</key>

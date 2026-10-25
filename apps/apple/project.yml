@@ -85,6 +85,7 @@ targets:
     dependencies:
       - package: ScrovaKit
         product: ScrovaKit
+      - sdk: MusicKit.framework
     # The policy and licence report live outside this project so the docs and
     # generated Rust data stay the single source of truth. Copy them in at build.
     preBuildScripts:
@@ -113,7 +114,7 @@ targets:
         CFBundleDisplayName: Scrova
         CFBundleName: Scrova
         LSRequiresIPhoneOS: true
-        NSAppleMusicUsageDescription: Scrova reads the track playing in Music so it can scrobble what you listen to.
+        NSAppleMusicUsageDescription: Scrova reads the track playing in Music and your Apple Music listening history so it can scrobble what you listen to.
         BGTaskSchedulerPermittedIdentifiers:
           - dev.satotek.scrova.ios.flush
         UIBackgroundModes:
