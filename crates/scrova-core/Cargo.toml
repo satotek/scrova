@@ -1,0 +1,16 @@
+[package]
+name = "scrova-core"
+description = "Platform-independent scrobble engine for Scrova"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+# FFI 用の derive をコア型に直接付ける。型を ffi クレートで二重定義しないため。
+uniffi = ["dep:uniffi"]
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+uuid.workspace = true
