@@ -372,15 +372,19 @@ impl Scrova {
     /// play again midway credits the playhead and would scrobble it a second
     /// time; its estimated start lands next to the first one.
     fn already_scrobbled(&self, scrobble: &Scrobble) -> Result<bool, ScrovaError> {
-        let Some(track_id) = scrobble.track.source_track_id.as_deref() else {
-            return Ok(false);
-        };
         let from = scrobble.started_at - RESTART_DUPLICATE_WINDOW;
         let to = scrobble.started_at + RESTART_DUPLICATE_WINDOW;
-        Ok(!self
-            .store
-            .existing_scrobble_starts(track_id, from, to)?
-            .is_empty())
+        let track = &scrobble.track;
+        let starts = match track.source_track_id.as_deref() {
+            Some(track_id) => self.store.existing_scrobble_starts(track_id, from, to)?,
+            None => self.store.existing_scrobble_starts_by_metadata(
+                &track.title,
+                &track.artist,
+                from,
+                to,
+            )?,
+        };
+        Ok(!starts.is_empty())
     }
 
     fn require_session_key(&self) -> Result<String, ScrovaError> {

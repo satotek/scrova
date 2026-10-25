@@ -386,6 +386,39 @@ impl Store {
         Ok(starts)
     }
 
+    /// Like [`Self::existing_scrobble_starts`], for players that expose no
+    /// track ID (many Android apps): matches on title and artist instead.
+    pub fn existing_scrobble_starts_by_metadata(
+        &self,
+        title: &str,
+        artist: &str,
+        from: SystemTime,
+        to: SystemTime,
+    ) -> Result<Vec<SystemTime>> {
+        let from_ms = system_time_to_millis(from)?;
+        let to_ms = system_time_to_millis(to)?;
+
+        let connection = self.connection();
+        let mut statement = connection.prepare(
+            "SELECT started_at_ms
+             FROM scrobbles
+             WHERE track_title = ?1
+               AND track_artist = ?2
+               AND started_at_ms >= ?3
+               AND started_at_ms <= ?4
+             ORDER BY started_at_ms ASC",
+        )?;
+        let rows = statement.query_map(params![title, artist, from_ms, to_ms], |row| {
+            row.get::<_, i64>(0)
+        })?;
+
+        let mut starts = Vec::new();
+        for row in rows {
+            starts.push(system_time_from_millis(row?)?);
+        }
+        Ok(starts)
+    }
+
     /// Applies a recovery scan in one transaction: optional baseline, snapshot
     /// states, and queued scrobbles either all commit or all roll back.
     pub fn apply_library_scan(

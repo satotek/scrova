@@ -340,3 +340,25 @@ async fn restarting_midway_does_not_queue_the_same_play_twice() {
     }
     assert_eq!(scrova.pending_count().unwrap(), 1);
 }
+
+#[tokio::test]
+async fn restart_dedupe_falls_back_to_title_and_artist_without_an_id() {
+    let (_server, scrova) = setup().await;
+    let mut t = track();
+    t.source_track_id = None;
+    let event = |s: u64| PlaybackEvent {
+        track: Some(t.clone()),
+        state: PlaybackState::Playing,
+        position: Some(Duration::from_secs(s)),
+        source: "com.example.player".into(),
+        observed_at: SystemTime::UNIX_EPOCH + Duration::from_secs(START + s),
+    };
+    for s in (0..=100).step_by(5) {
+        scrova.handle_playback_event(event(s)).unwrap();
+    }
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+
+    *lock(&scrova.engine) = ScrobbleEngine::new(EngineConfig::default());
+    scrova.handle_playback_event(event(120)).unwrap();
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+}
