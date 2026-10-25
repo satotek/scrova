@@ -23,12 +23,15 @@ use scrova_core::{
 use scrova_lastfm::{
     Credentials, LastfmClient, LastfmError, NowPlaying, RetryClass, ScrobbleOutcome,
 };
-use scrova_storage::{LASTFM_DESTINATION, LibraryScan, QueueId, QueueItem, Store};
+use scrova_storage::{
+    HistoryCursor as StorageHistoryCursor, HistoryPage as StorageHistoryPage, LASTFM_DESTINATION,
+    LibraryScan, QueueId, QueueItem, Store,
+};
 
 pub use error::ScrovaError;
 pub use records::{
-    AuthRequest, DeliveryStatus, FlushReport, LastfmAccount, RecoveryReport, ScrobbleRecord,
-    ScrovaConfig,
+    AuthRequest, DeliveryStatus, FlushReport, HistoryCursor, HistoryPage, LastfmAccount,
+    RecoveryReport, ScrobbleRecord, ScrovaConfig,
 };
 
 uniffi::setup_scaffolding!();
@@ -352,6 +355,29 @@ impl Scrova {
             .into_iter()
             .map(ScrobbleRecord::from)
             .collect())
+    }
+
+    /// Returns one History page ordered by playback time, newest first.
+    ///
+    /// `before` is the opaque `next` value from the previous page. Passing it
+    /// back keeps paging stable even when several plays share a timestamp.
+    pub fn scrobble_history(
+        &self,
+        limit: u32,
+        before: Option<HistoryCursor>,
+    ) -> Result<HistoryPage, ScrovaError> {
+        let before = before.map(|cursor| StorageHistoryCursor {
+            started_at: cursor.started_at,
+            id: cursor.id,
+        });
+        let page: StorageHistoryPage = self.store.history_page(limit as usize, before)?;
+        Ok(HistoryPage {
+            items: page.items.into_iter().map(ScrobbleRecord::from).collect(),
+            next: page.next.map(|cursor| HistoryCursor {
+                started_at: cursor.started_at,
+                id: cursor.id,
+            }),
+        })
     }
 }
 

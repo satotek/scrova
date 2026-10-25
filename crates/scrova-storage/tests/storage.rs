@@ -2,8 +2,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use scrova_core::{Scrobble, ScrobbleOrigin, TimestampAccuracy, Track};
 use scrova_storage::{
-    DEFAULT_CLAIM_LIMIT, DeliveryState, EnqueueOutcome, LASTFM_DESTINATION, LibraryScan,
-    LibraryScanResult, LibraryState, MAX_BACKOFF, QueueId, QueueItem, Store, backoff,
+    DEFAULT_CLAIM_LIMIT, DeliveryState, EnqueueOutcome, HistoryCursor, LASTFM_DESTINATION,
+    LibraryScan, LibraryScanResult, LibraryState, MAX_BACKOFF, QueueId, QueueItem, Store, backoff,
 };
 
 fn at(millis: u64) -> SystemTime {
@@ -326,6 +326,90 @@ fn recent_respects_limit_and_returns_deterministic_ids() {
     assert_eq!(items.len(), 2);
     assert_ne!(items[0].id, items[1].id);
     assert!(store.recent(0).unwrap().is_empty());
+}
+
+#[test]
+fn history_pages_newest_first_with_started_at_and_id_cursor() {
+    let store = Store::open_in_memory().unwrap();
+    store.enqueue(&sample("oldest", 1_000)).unwrap();
+    store.enqueue(&sample("tie-older-id", 2_000)).unwrap();
+    store.enqueue(&sample("tie-newer-id", 2_000)).unwrap();
+
+    let first = store.history_page(2, None).unwrap();
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .map(|item| item.scrobble.session_id.as_str())
+            .collect::<Vec<_>>(),
+        ["tie-newer-id", "tie-older-id"]
+    );
+    let next = first.next.expect("one older row remains");
+    assert_eq!(next.started_at, at(2_000));
+    assert_eq!(next.id, first.items[1].scrobble_id);
+
+    let second = store.history_page(2, Some(next)).unwrap();
+    assert_eq!(
+        second
+            .items
+            .iter()
+            .map(|item| item.scrobble.session_id.as_str())
+            .collect::<Vec<_>>(),
+        ["oldest"]
+    );
+    assert_eq!(second.next, None);
+}
+
+#[test]
+fn history_next_is_none_when_the_page_exactly_reaches_the_end() {
+    let store = Store::open_in_memory().unwrap();
+    store.enqueue(&sample("newer", 2_000)).unwrap();
+    store.enqueue(&sample("older", 1_000)).unwrap();
+
+    let page = store.history_page(2, None).unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.next, None);
+}
+
+#[test]
+fn history_limit_zero_and_empty_database_are_empty_pages() {
+    let store = Store::open_in_memory().unwrap();
+    let empty = store.history_page(10, None).unwrap();
+    assert!(empty.items.is_empty());
+    assert_eq!(empty.next, None);
+
+    store.enqueue(&sample("one", 1_000)).unwrap();
+    let zero = store.history_page(0, None).unwrap();
+    assert!(zero.items.is_empty());
+    assert_eq!(zero.next, None);
+}
+
+#[test]
+fn history_cursor_is_strictly_older_than_the_last_row() {
+    let store = Store::open_in_memory().unwrap();
+    store.enqueue(&sample("same-time-1", 5_000)).unwrap();
+    store.enqueue(&sample("same-time-2", 5_000)).unwrap();
+
+    let first = store.history_page(1, None).unwrap();
+    assert_eq!(first.items[0].scrobble.session_id, "same-time-2");
+    let cursor = HistoryCursor {
+        started_at: first.items[0].scrobble.started_at,
+        id: first.items[0].scrobble_id,
+    };
+
+    let second = store.history_page(1, Some(cursor)).unwrap();
+    assert_eq!(second.items[0].scrobble.session_id, "same-time-1");
+    assert_eq!(second.next, None);
+}
+
+#[test]
+fn history_includes_delivery_status() {
+    let store = Store::open_in_memory().unwrap();
+    let id = store.enqueue(&sample("submitted", 1_000)).unwrap();
+    store.mark_submitted([id]).unwrap();
+
+    let page = store.history_page(10, None).unwrap();
+    assert_eq!(page.items[0].state, DeliveryState::Submitted);
 }
 
 #[test]

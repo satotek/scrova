@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params, params_from_iter};
 use scrova_core::{Scrobble, ScrobbleOrigin, TimestampAccuracy, Track};
 use thiserror::Error;
@@ -152,12 +153,30 @@ pub struct QueueItem {
     pub id: QueueId,
     pub destination: String,
     pub scrobble: Scrobble,
+    /// Row id of the scrobble body. Delivery ids can change when a destination
+    /// is added, so history cursors use this stable pair with `started_at`.
+    pub scrobble_id: i64,
     pub state: DeliveryState,
     pub attempts: u32,
     pub next_attempt_at: SystemTime,
     pub last_error: Option<String>,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
+}
+
+/// Opaque keyset cursor for [`Store::history_page`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryCursor {
+    pub started_at: SystemTime,
+    pub id: i64,
+}
+
+/// One page of scrobbles, newest first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryPage {
+    pub items: Vec<QueueItem>,
+    /// `None` when no older rows exist. The UI only passes this value back.
+    pub next: Option<HistoryCursor>,
 }
 
 /// SQLite-backed scrobble queue.
@@ -647,6 +666,69 @@ impl Store {
         rows.into_iter().map(QueueItem::try_from).collect()
     }
 
+    /// Keyset-paged History query, newest first.
+    ///
+    /// `(started_at_ms, id)` is both the sort key and the cursor. Comparing the
+    /// pair avoids skipping or repeating rows that share a timestamp, which is
+    /// common for recovered plays. The existing `idx_scrobbles_started` index
+    /// covers this order, so no extra migration is needed.
+    pub fn history_page(&self, limit: usize, before: Option<HistoryCursor>) -> Result<HistoryPage> {
+        if limit == 0 {
+            return Ok(HistoryPage {
+                items: Vec::new(),
+                next: None,
+            });
+        }
+
+        let fetch_limit = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut values = vec![Value::Text(LASTFM_DESTINATION.to_owned())];
+        let sql = if let Some(cursor) = before {
+            values.push(Value::Integer(system_time_to_millis(cursor.started_at)?));
+            values.push(Value::Integer(cursor.id));
+            values.push(Value::Integer(fetch_limit));
+            format!(
+                "{QUEUE_SELECT}
+                 WHERE d.destination = ?1
+                   AND (s.started_at_ms, s.id) < (?2, ?3)
+                 ORDER BY s.started_at_ms DESC, s.id DESC
+                 LIMIT ?4"
+            )
+        } else {
+            values.push(Value::Integer(fetch_limit));
+            format!(
+                "{QUEUE_SELECT}
+                 WHERE d.destination = ?1
+                 ORDER BY s.started_at_ms DESC, s.id DESC
+                 LIMIT ?2"
+            )
+        };
+
+        let connection = self.connection();
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement
+            .query_map(params_from_iter(values), raw_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut items = rows
+            .into_iter()
+            .map(QueueItem::try_from)
+            .collect::<Result<Vec<_>>>()?;
+
+        // Fetch one extra row so `next` is only set when something is actually
+        // older, avoiding an empty extra page at an exact boundary.
+        let has_more = items.len() > limit;
+        items.truncate(limit);
+        let next = if has_more {
+            items.last().map(|item| HistoryCursor {
+                started_at: item.scrobble.started_at,
+                id: item.scrobble_id,
+            })
+        } else {
+            None
+        };
+
+        Ok(HistoryPage { items, next })
+    }
+
     fn connection(&self) -> MutexGuard<'_, Connection> {
         // A panic in another caller must not make the queue permanently
         // unusable; SQLite will have rolled back the interrupted transaction.
@@ -926,6 +1008,7 @@ struct RawQueueItem {
     timestamp_accuracy: String,
     origin: String,
     source: String,
+    scrobble_id: i64,
 }
 
 fn raw_from_row(row: &Row<'_>) -> rusqlite::Result<RawQueueItem> {
@@ -951,6 +1034,7 @@ fn raw_from_row(row: &Row<'_>) -> rusqlite::Result<RawQueueItem> {
         timestamp_accuracy: row.get(18)?,
         origin: row.get(19)?,
         source: row.get(20)?,
+        scrobble_id: row.get(21)?,
     })
 }
 
@@ -980,6 +1064,7 @@ impl TryFrom<RawQueueItem> for QueueItem {
             timestamp_accuracy,
             origin,
             source,
+            scrobble_id,
         } = raw;
 
         let attempts = u32::try_from(attempts).map_err(|_| StoreError::InvalidField {
@@ -1012,6 +1097,7 @@ impl TryFrom<RawQueueItem> for QueueItem {
                 source,
                 session_id,
             },
+            scrobble_id,
             state,
             attempts,
             next_attempt_at: system_time_from_millis(next_attempt_at_ms)?,
@@ -1044,7 +1130,8 @@ SELECT
     s.started_at_ms,
     s.timestamp_accuracy,
     s.origin,
-    s.source
+    s.source,
+    s.id
 FROM deliveries d
 JOIN scrobbles s ON s.id = d.scrobble_id
 "#;

@@ -75,6 +75,20 @@ pub struct ScrobbleRecord {
     pub last_error: Option<String>,
 }
 
+/// Opaque page cursor. The UI only stores `HistoryPage.next` and sends it back.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct HistoryCursor {
+    pub started_at: SystemTime,
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct HistoryPage {
+    pub items: Vec<ScrobbleRecord>,
+    /// `None` when there are no older scrobbles.
+    pub next: Option<HistoryCursor>,
+}
+
 impl From<QueueItem> for ScrobbleRecord {
     fn from(item: QueueItem) -> Self {
         let status = match item.state {

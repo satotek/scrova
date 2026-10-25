@@ -341,6 +341,120 @@ async fn restarting_midway_does_not_queue_the_same_play_twice() {
     assert_eq!(scrova.pending_count().unwrap(), 1);
 }
 
+fn history_scrobble(session: &str, title: &str, started_at: SystemTime) -> Scrobble {
+    Scrobble {
+        track: Track {
+            title: title.into(),
+            artist: "History Artist".into(),
+            album: None,
+            album_artist: None,
+            duration: Some(Duration::from_secs(200)),
+            source_track_id: Some(session.into()),
+        },
+        started_at,
+        timestamp_accuracy: TimestampAccuracy::Observed,
+        origin: ScrobbleOrigin::LiveObservation,
+        source: "com.apple.Music".into(),
+        session_id: session.into(),
+    }
+}
+
+#[tokio::test]
+async fn scrobble_history_pages_newest_first_with_a_deterministic_cursor() {
+    let (_server, scrova) = setup().await;
+    for (session, title, seconds) in [("a", "A", 1_000), ("b", "B", 2_000), ("c", "C", 2_000)] {
+        scrova
+            .store
+            .enqueue(&history_scrobble(
+                session,
+                title,
+                SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
+            ))
+            .unwrap();
+    }
+
+    let first = scrova.scrobble_history(2, None).unwrap();
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .map(|item| item.track.title.as_str())
+            .collect::<Vec<_>>(),
+        ["C", "B"]
+    );
+    let next = first.next.expect("one older row remains");
+
+    let second = scrova.scrobble_history(2, Some(next)).unwrap();
+    assert_eq!(
+        second
+            .items
+            .iter()
+            .map(|item| item.track.title.as_str())
+            .collect::<Vec<_>>(),
+        ["A"]
+    );
+    assert!(second.next.is_none());
+}
+
+#[tokio::test]
+async fn scrobble_history_next_is_none_at_an_exact_boundary() {
+    let (_server, scrova) = setup().await;
+    for (session, seconds) in [("newer", 2_000), ("older", 1_000)] {
+        scrova
+            .store
+            .enqueue(&history_scrobble(
+                session,
+                session,
+                SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
+            ))
+            .unwrap();
+    }
+
+    let page = scrova.scrobble_history(2, None).unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert!(page.next.is_none());
+}
+
+#[tokio::test]
+async fn scrobble_history_handles_zero_limit_and_empty_history() {
+    let (_server, scrova) = setup().await;
+
+    let empty = scrova.scrobble_history(10, None).unwrap();
+    assert!(empty.items.is_empty());
+    assert!(empty.next.is_none());
+
+    scrova
+        .store
+        .enqueue(&history_scrobble(
+            "one",
+            "One",
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
+        ))
+        .unwrap();
+    let zero = scrova.scrobble_history(0, None).unwrap();
+    assert!(zero.items.is_empty());
+    assert!(zero.next.is_none());
+}
+
+#[tokio::test]
+async fn scrobble_history_reports_delivery_status() {
+    let (_server, scrova) = setup().await;
+    let id = scrova
+        .store
+        .enqueue(&history_scrobble(
+            "submitted",
+            "Submitted",
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
+        ))
+        .unwrap();
+    scrova.store.mark_submitted([id]).unwrap();
+
+    let page = scrova.scrobble_history(10, None).unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].status, DeliveryStatus::Submitted);
+    assert_eq!(page.items[0].track.title, "Submitted");
+}
+
 #[tokio::test]
 async fn restart_dedupe_falls_back_to_title_and_artist_without_an_id() {
     let (_server, scrova) = setup().await;
