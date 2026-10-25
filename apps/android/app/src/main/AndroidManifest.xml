@@ -4,6 +4,21 @@
     <!-- The Rust core talks to the Last.fm API directly. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Package visibility (Android 11+) hides other apps, so their names show
+         as package IDs. Media players are found through the interfaces they
+         expose to media controllers, which avoids QUERY_ALL_PACKAGES. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.browse.MediaBrowserService" />
+        </intent>
+        <intent>
+            <action android:name="androidx.media3.session.MediaSessionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MEDIA_BUTTON" />
+        </intent>
+    </queries>
+
     <!-- No backup: the session key is encrypted with a Keystore key that is
          not restored, so a restored copy could never be decrypted. -->
     <application
