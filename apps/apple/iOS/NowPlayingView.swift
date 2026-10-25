@@ -23,19 +23,19 @@ struct NowPlayingView: View {
                     }
                     nowPlaying
                 }
-                // Lowest priority, so leftover height lands here rather than
-                // around the artwork, keeping the artwork and its text together.
-                Spacer(minLength: 0)
-                    .layoutPriority(-1)
-                if let latest = model.recentScrobbles.first {
-                    lastScrobbled(latest)
-                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .navigationTitle("Now playing")
             .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    @ViewBuilder
+    private var latest: some View {
+        if let record = model.recentScrobbles.first {
+            lastScrobbled(record)
         }
     }
 
@@ -83,42 +83,86 @@ struct NowPlayingView: View {
 
     // MARK: Now playing
 
-    @ViewBuilder
     private var nowPlaying: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            artwork
+        GeometryReader { proxy in
+            // Side by side when the space is clearly wider than tall (iPad in
+            // landscape): stacked, the square artwork would leave the text a
+            // sliver at the bottom.
+            if model.currentTrack != nil, proxy.size.width > proxy.size.height * 1.2 {
+                HStack(alignment: .center, spacing: 32) {
+                    artwork
+                    // The last scrobble follows the meter in the same column,
+                    // rather than stretching across the bottom under both.
+                    VStack(alignment: .leading, spacing: 18) {
+                        trackText
+                        meter
+                        // An iPhone on its side has no height to spare; there
+                        // the card would be cut off, and History is a tap away.
+                        if proxy.size.height >= 320 {
+                            latest
+                                .padding(.top, 8)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    artwork
+                        .frame(maxWidth: .infinity)
+                    trackText
+                        .layoutPriority(1)
+                    meter
+                        .layoutPriority(1)
+                    // Lowest priority, so leftover height lands here rather
+                    // than around the artwork, keeping it with its text.
+                    Spacer(minLength: 0)
+                        .layoutPriority(-1)
+                    latest
+                        .layoutPriority(1)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                // A full-width square on an iPad in portrait would be larger
+                // than the text it belongs to warrants.
+                .frame(maxWidth: 640)
                 .frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: 4) {
-                if let track = model.currentTrack {
-                    Text(track.title)
-                        .font(.title2.weight(.semibold))
-                        .lineLimit(2)
-                    if !track.artist.isEmpty {
-                        Text(track.artist)
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if let album = track.album, !album.isEmpty {
-                        Text(album)
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                } else {
-                    Text("Nothing playing")
-                        .font(.title2.weight(.semibold))
+            }
+        }
+    }
+
+    private var trackText: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let track = model.currentTrack {
+                Text(track.title)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(2)
+                if !track.artist.isEmpty {
+                    Text(track.artist)
+                        .font(.body)
                         .foregroundStyle(.secondary)
-                    Text("Play something in Music, then come back. Scrova only counts while it is open.")
+                        .lineLimit(1)
+                }
+                if let album = track.album, !album.isEmpty {
+                    Text(album)
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
+            } else {
+                Text("Nothing playing")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text("Play something in Music, then come back. Scrova only counts while it is open.")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
             }
-            .layoutPriority(1)
-            if let progress = model.progress, model.currentTrack != nil {
-                ScrobbleMeter(progress: progress, tint: model.tint)
-                    .layoutPriority(1)
-            }
+        }
+    }
+
+    @ViewBuilder
+    private var meter: some View {
+        if let progress = model.progress, model.currentTrack != nil {
+            ScrobbleMeter(progress: progress, tint: model.tint)
         }
     }
 
@@ -126,7 +170,7 @@ struct NowPlayingView: View {
         let isPaused = model.playbackState == .paused && model.currentTrack != nil
         return Color.clear
             .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: model.currentTrack == nil ? 88 : .infinity)
+            .frame(maxWidth: model.currentTrack == nil ? 88 : nil)
             .background {
                 ZStack {
                     Rectangle().fill(.quaternary)

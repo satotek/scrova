@@ -4,6 +4,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -58,18 +61,54 @@ fun HomeScreen(model: MainViewModel, onHistory: () -> Unit, onSettings: () -> Un
         if (!access) {
             // Nothing can be shown until access is on, so the card is the screen.
             AccessCard()
-            Spacer(Modifier.weight(1f))
-        } else {
-            if (signIn !is SignInState.SignedIn) {
-                TextButton(onClick = onSettings, contentPadding = PaddingValues(0.dp)) {
-                    Text("Sign in to Last.fm in Settings to send scrobbles.")
+            return@Column
+        }
+        if (signIn !is SignInState.SignedIn) {
+            TextButton(onClick = onSettings, contentPadding = PaddingValues(0.dp)) {
+                Text("Sign in to Last.fm in Settings to send scrobbles.")
+            }
+        }
+        val latest: (@Composable () -> Unit)? = recent.firstOrNull()?.let { record -> { LastScrobbled(record, onHistory) } }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val playing = nowPlaying
+            // Side by side when clearly wider than tall (landscape, tablets):
+            // stacked, the square artwork would leave the text a sliver.
+            val roomForLatest = maxHeight >= WIDE_LATEST_MIN_HEIGHT
+            if (playing != null && maxWidth > maxHeight * 1.2f) {
+                Row(
+                    Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(32.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Artwork(playing, Modifier.weight(1f, fill = false).aspectRatio(1f, matchHeightConstraintsFirst = true))
+                    // The last scrobble follows the timeline in the same column,
+                    // rather than stretching across the bottom under both.
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        TrackDetails(playing)
+                        playing.progress?.let { ScrobbleTimeline(it, playing.tint?.let(::Color) ?: MaterialTheme.colorScheme.primary) }
+                        // A phone on its side has no height to spare; there the
+                        // card would be cut off, and History is one tap away.
+                        if (roomForLatest) {
+                            latest?.let { Box(Modifier.padding(top = 8.dp)) { it() } }
+                        }
+                    }
+                }
+            } else {
+                // Capped so a tablet in portrait does not get a cover larger
+                // than the text it belongs to warrants.
+                Column(
+                    Modifier.fillMaxHeight().widthIn(max = 640.dp).align(Alignment.TopCenter),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    NowPlayingSection(playing, Modifier.weight(1f))
+                    latest?.invoke()
                 }
             }
-            NowPlayingSection(nowPlaying, Modifier.weight(1f))
         }
-        recent.firstOrNull()?.let { record -> LastScrobbled(record, onHistory) }
     }
 }
+
+private val WIDE_LATEST_MIN_HEIGHT = 320.dp
 
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
@@ -92,46 +131,60 @@ private fun NowPlayingSection(nowPlaying: NowPlaying?, modifier: Modifier = Modi
         }
         // Only the artwork flexes: it takes the height the text and timeline
         // leave, staying square and never wider than the screen.
-        val paused = nowPlaying.progress?.state == PlaybackState.PAUSED
-        Box(
+        Artwork(
+            nowPlaying,
             Modifier.weight(1f, fill = false).align(Alignment.CenterHorizontally)
-                .aspectRatio(1f, matchHeightConstraintsFirst = true).clip(MaterialTheme.shapes.extraLargeIncreased)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            val art = nowPlaying.artwork
-            if (art != null) {
-                Image(art.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            } else {
-                Icon(painterResource(R.drawable.ic_music_note), contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
-            }
-            // A dimmed cover reads as "paused" at a glance, without another label.
-            if (paused) {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
-                Icon(painterResource(R.drawable.ic_pause), contentDescription = "Paused", tint = Color.White, modifier = Modifier.size(44.dp))
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(nowPlaying.track.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (nowPlaying.track.artist.isNotEmpty()) {
-                Text(nowPlaying.track.artist, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            nowPlaying.track.album?.takeIf { it.isNotEmpty() }?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            // Several apps can play on Android, so say which one this is; set
-            // apart from the album so the two are not read as one line of metadata.
-            Text(
-                nowPlaying.appLabel,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .padding(top = 6.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(50))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            )
-        }
+                .aspectRatio(1f, matchHeightConstraintsFirst = true),
+        )
+        TrackDetails(nowPlaying)
         nowPlaying.progress?.let { ScrobbleTimeline(it, accent) }
+    }
+}
+
+@Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+private fun Artwork(nowPlaying: NowPlaying, modifier: Modifier) {
+    val paused = nowPlaying.progress?.state == PlaybackState.PAUSED
+    Box(
+        modifier.clip(MaterialTheme.shapes.extraLargeIncreased)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        val art = nowPlaying.artwork
+        if (art != null) {
+            Image(art.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            Icon(painterResource(R.drawable.ic_music_note), contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
+        }
+        // A dimmed cover reads as "paused" at a glance, without another label.
+        if (paused) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
+            Icon(painterResource(R.drawable.ic_pause), contentDescription = "Paused", tint = Color.White, modifier = Modifier.size(44.dp))
+        }
+    }
+}
+
+@Composable
+private fun TrackDetails(nowPlaying: NowPlaying) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(nowPlaying.track.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (nowPlaying.track.artist.isNotEmpty()) {
+            Text(nowPlaying.track.artist, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        nowPlaying.track.album?.takeIf { it.isNotEmpty() }?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        // Several apps can play on Android, so say which one this is; set
+        // apart from the album so the two are not read as one line of metadata.
+        Text(
+            nowPlaying.appLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(50))
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+        )
     }
 }
 
