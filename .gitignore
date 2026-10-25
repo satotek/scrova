@@ -25,3 +25,12 @@ DerivedData/
 
 # Local notes that do not belong in the repository (e.g. competitor research)
 /tmp/
+
+# Android build outputs, and local.properties (SDK path, Last.fm credentials)
+/apps/android/.gradle/
+/apps/android/.kotlin/
+/apps/android/.idea/
+/apps/android/local.properties
+/apps/android/**/build/
+/apps/android/**/.cxx/
+*.iml
