@@ -24,6 +24,8 @@ final class NowPlayingObserver {
     /// whether the same track is still playing on return.
     private var leftWhilePlaying: PlaybackEvent?
     private var artworkItemID: MPMediaEntityPersistentID?
+    private var artworkChangedAt = Date.distantPast
+    private static let artworkSettleTime: TimeInterval = 15
 
     var authorizationStatus: MPMediaLibraryAuthorizationStatus {
         MPMediaLibrary.authorizationStatus()
@@ -106,11 +108,19 @@ final class NowPlayingObserver {
         updateArtwork()
     }
 
-    /// Rendering artwork is not free, so it happens once per item.
+    /// Rendering artwork is not free, so it settles once per item. Streamed
+    /// items load their artwork after the track changes, and until then Music
+    /// can hand back the previous track's image, so it is read again for a
+    /// short while after each change.
     private func updateArtwork() {
         let item = player.nowPlayingItem
-        guard item?.persistentID != artworkItemID else { return }
-        artworkItemID = item?.persistentID
+        let now = Date()
+        if item?.persistentID != artworkItemID {
+            artworkItemID = item?.persistentID
+            artworkChangedAt = now
+        } else if now.timeIntervalSince(artworkChangedAt) > Self.artworkSettleTime {
+            return
+        }
         // 600pt covers the largest size the app draws at 3x without upscaling.
         onArtwork?(item?.artwork?.image(at: CGSize(width: 600, height: 600)))
     }
