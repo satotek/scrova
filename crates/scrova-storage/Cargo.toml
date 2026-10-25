@@ -1,0 +1,16 @@
+[package]
+name = "scrova-storage"
+description = "SQLite-backed scrobble delivery queue for Scrova"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.41", features = ["bundled"] }
+scrova-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
