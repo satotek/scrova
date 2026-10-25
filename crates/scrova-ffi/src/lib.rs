@@ -19,6 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use scrova_core::{
     EngineConfig, EngineOutput, LibraryItem, LibraryState, PlaybackEvent, RecoveryConfig, Scrobble,
     ScrobbleEngine, ScrobbleOrigin, SessionProgress, TimestampAccuracy, Track, plan_recovery,
+    scrobble_threshold,
 };
 use scrova_lastfm::{
     Credentials, LastfmClient, LastfmError, NowPlaying, RetryClass, ScrobbleOutcome,
@@ -45,8 +46,7 @@ const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(5 * 60);
 /// fix it, so only check back occasionally.
 const SUSPENDED_BACKOFF: Duration = Duration::from_secs(60 * 60);
 /// Start times of one play estimated from two observations differ by polling
-/// jitter and rounding, far less than this; two real plays of a track cannot
-/// start this close together.
+/// jitter and rounding, far less than this.
 const RESTART_DUPLICATE_WINDOW: Duration = Duration::from_secs(30);
 
 #[derive(uniffi::Object)]
@@ -398,7 +398,13 @@ impl Scrova {
     /// play again midway credits the playhead and would scrobble it a second
     /// time; its estimated start lands next to the first one.
     fn already_scrobbled(&self, scrobble: &Scrobble) -> Result<bool, ScrovaError> {
-        let from = scrobble.started_at - RESTART_DUPLICATE_WINDOW;
+        // A start estimated after a pause lands later by the time spent
+        // paused, so look back a whole threshold. A real second play cannot
+        // start that soon after the first: the first had to be listened to
+        // for at least the threshold before it was scrobbled.
+        let threshold = scrobble_threshold(scrobble.track.duration, &EngineConfig::default())
+            .unwrap_or_default();
+        let from = scrobble.started_at - threshold.max(RESTART_DUPLICATE_WINDOW);
         let to = scrobble.started_at + RESTART_DUPLICATE_WINDOW;
         let track = &scrobble.track;
         let starts = match track.source_track_id.as_deref() {

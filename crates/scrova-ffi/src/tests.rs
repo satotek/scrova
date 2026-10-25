@@ -476,3 +476,26 @@ async fn restart_dedupe_falls_back_to_title_and_artist_without_an_id() {
     scrova.handle_playback_event(event(120)).unwrap();
     assert_eq!(scrova.pending_count().unwrap(), 1);
 }
+
+#[tokio::test]
+async fn restart_dedupe_covers_a_start_that_drifted_with_a_pause() {
+    let (_server, scrova) = setup().await;
+    let t = track();
+    let event = |position: u64, at: u64| PlaybackEvent {
+        track: Some(t.clone()),
+        state: PlaybackState::Playing,
+        position: Some(Duration::from_secs(position)),
+        source: "com.apple.Music".into(),
+        observed_at: SystemTime::UNIX_EPOCH + Duration::from_secs(START + at),
+    };
+    for s in (0..=120).step_by(5) {
+        scrova.handle_playback_event(event(s, s)).unwrap();
+    }
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+
+    // Paused at 125s for 90s, then the app is relaunched and resumes: the
+    // estimated start lands 90s after the real one.
+    *lock(&scrova.engine) = ScrobbleEngine::new(EngineConfig::default());
+    scrova.handle_playback_event(event(125, 215)).unwrap();
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+}
