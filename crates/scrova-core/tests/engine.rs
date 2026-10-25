@@ -432,7 +432,7 @@ fn joining_midway_credit_is_capped_by_duration() {
 fn joining_past_the_threshold_scrobbles_without_another_event() {
     let mut engine = ScrobbleEngine::default();
     let t = track("a", Some(200));
-    let out = run(&mut engine, [ev(&t, PlaybackState::Paused, 150, 0)]);
+    let out = run(&mut engine, [ev(&t, PlaybackState::Playing, 150, 0)]);
     assert_eq!(scrobbles(&out).len(), 1);
     assert!(engine.progress(SOURCE).unwrap().scrobbled);
 }
@@ -464,4 +464,64 @@ fn metadata_filled_in_stages_stays_one_play() {
     events.extend(play_through(&full, 3, 120, 3, 5));
     let out = run(&mut engine, events);
     assert_eq!(scrobbles(&out).len(), 1);
+}
+
+fn stopped(t: u64) -> PlaybackEvent {
+    PlaybackEvent {
+        track: None,
+        state: PlaybackState::Stopped,
+        position: None,
+        source: SOURCE.into(),
+        observed_at: at(t),
+    }
+}
+
+#[test]
+fn a_stop_mid_track_resumes_the_same_play() {
+    // Music on iPhone reports a long pause as stopped.
+    let mut engine = ScrobbleEngine::default();
+    let t = track("a", Some(200));
+    let mut events = play_through(&t, 0, 120, 0, 5);
+    events.push(stopped(125));
+    events.extend(play_through(&t, 120, 200, 600, 5));
+    let out = run(&mut engine, events);
+    let s = scrobbles(&out);
+    assert_eq!(s.len(), 1, "{s:?}");
+    assert_eq!(s[0].started_at, at(0));
+}
+
+#[test]
+fn reopening_on_a_paused_track_does_not_scrobble_again() {
+    let mut engine = ScrobbleEngine::default();
+    let t = track("a", Some(200));
+    let out = run(&mut engine, play_through(&t, 0, 130, 0, 5));
+    assert_eq!(scrobbles(&out).len(), 1);
+    // A fresh engine (process relaunched) finds the track paused past the
+    // threshold: nothing is scrobbled until it plays.
+    let mut fresh = ScrobbleEngine::default();
+    let out = run(&mut fresh, [ev(&t, PlaybackState::Paused, 130, 900)]);
+    assert!(scrobbles(&out).is_empty());
+}
+
+#[test]
+fn a_track_found_after_time_away_is_joined_midway() {
+    // The iOS app returns from the background to a different track.
+    let mut engine = ScrobbleEngine::default();
+    let a = track("a", Some(200));
+    let b = track("b", Some(255));
+    let mut events = play_through(&a, 0, 20, 0, 5);
+    // What the observer sends on return when the track changed: the old one,
+    // paused at the moment the app left.
+    events.push(ev(&a, PlaybackState::Paused, 20, 20));
+    events.push(ev(&b, PlaybackState::Playing, 60, 600));
+    events.extend(play_through(&b, 65, 130, 605, 5));
+    let out = run(&mut engine, events);
+    let s = scrobbles(&out);
+    assert_eq!(s.len(), 1, "{s:?}");
+    assert_eq!(s[0].track.title, "Title b");
+    assert_eq!(
+        s[0].started_at,
+        at(540),
+        "playhead credited back to the start"
+    );
 }
