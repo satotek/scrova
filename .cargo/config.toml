@@ -1,0 +1,21 @@
+# Apple targets must link with Xcode's toolchain. A Nix-wrapped `cc` on PATH
+# injects the macOS SDK and Nix's libiconv, which breaks iOS links and leaves
+# /nix/store references in macOS binaries.
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/clang"
+
+[target.x86_64-apple-darwin]
+linker = "/usr/bin/clang"
+
+[target.aarch64-apple-ios]
+linker = "/usr/bin/clang"
+
+[target.aarch64-apple-ios-sim]
+linker = "/usr/bin/clang"
+
+# Same reason for C code built by cc-rs (e.g. bundled SQLite).
+[env]
+CC_aarch64_apple_darwin = "/usr/bin/clang"
+CC_x86_64_apple_darwin = "/usr/bin/clang"
+CC_aarch64_apple_ios = "/usr/bin/clang"
+CC_aarch64_apple_ios_sim = "/usr/bin/clang"
