@@ -3,6 +3,7 @@ import MediaPlayer
 import Observation
 import ScrovaKit
 import SwiftUI
+import UIKit
 
 /// iOS counterpart of the menu-bar model. Playback comes from `NowPlayingObserver`;
 /// Last.fm traffic stays in Rust.
@@ -22,6 +23,9 @@ final class AppModel {
     private var authSession: ASWebAuthenticationSession?
     private var approvalTask: Task<Void, Never>?
 
+    /// Shared by the History tab and the now-playing "Last scrobbled" row.
+    let history: HistoryPager
+
     private(set) var currentTrack: Track?
     private(set) var artwork: UIImage?
     private(set) var tint: Color?
@@ -34,16 +38,22 @@ final class AppModel {
     private(set) var isSending = false
     private(set) var setupFailure: String?
     private(set) var libraryDenied = false
+    private(set) var libraryAuthorizationStatus: MPMediaLibraryAuthorizationStatus = MPMediaLibrary.authorizationStatus()
+    private(set) var backgroundRefreshStatus: UIBackgroundRefreshStatus = UIApplication.shared.backgroundRefreshStatus
 
     init() {
+        let core: Scrova?
         do {
-            scrova = try Scrova(config: ScrovaSetup.makeConfig())
+            core = try Scrova(config: ScrovaSetup.makeConfig())
         } catch {
-            scrova = nil
+            core = nil
             setupFailure = "Scrova could not start: \(error.localizedDescription)"
         }
+        scrova = core
+        history = HistoryPager(scrova: core)
         restoreSession()
         refreshQueue()
+        refreshPermissions()
         observer.onEvent = { [weak self] event in
             self?.ingest(event)
         }
@@ -61,7 +71,9 @@ final class AppModel {
     func activate() {
         Task {
             let status = await observer.requestAuthorizationIfNeeded()
+            libraryAuthorizationStatus = status
             libraryDenied = status == .denied || status == .restricted
+            backgroundRefreshStatus = UIApplication.shared.backgroundRefreshStatus
             observer.poll()
             await recoverHistory()
             flush()
@@ -69,6 +81,13 @@ final class AppModel {
         // The view exists, so this is a foreground launch, not a refresh-task wake.
         setForeground(true)
         FlushScheduler.scheduleNext()
+    }
+
+    /// Refresh values the Settings permission rows display.
+    func refreshPermissions() {
+        libraryAuthorizationStatus = MPMediaLibrary.authorizationStatus()
+        libraryDenied = libraryAuthorizationStatus == .denied || libraryAuthorizationStatus == .restricted
+        backgroundRefreshStatus = UIApplication.shared.backgroundRefreshStatus
     }
 
     func setForeground(_ isForeground: Bool) {
@@ -221,5 +240,6 @@ final class AppModel {
         guard let scrova else { return }
         recentScrobbles = (try? scrova.recentScrobbles(limit: 10)) ?? []
         pendingCount = (try? scrova.pendingCount()) ?? 0
+        history.invalidate()
     }
 }
