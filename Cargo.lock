@@ -1600,6 +1600,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "webpki-root-certs",
  "wiremock",
 ]
 
@@ -2116,6 +2117,13 @@ dependencies = [
  "uniffi_core",
  "uniffi_macros",
  "uniffi_pipeline",
+]
+
+[[package]]
+name = "uniffi-bindgen"
+version = "0.1.0"
+dependencies = [
+ "uniffi",
 ]
 
 [[package]]

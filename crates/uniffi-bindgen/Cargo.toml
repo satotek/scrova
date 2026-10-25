@@ -1,0 +1,15 @@
+[package]
+name = "uniffi-bindgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+# The `cli` feature exposes uniffi_bindgen_main(), the generic multi-language
+# CLI. It also keeps cargo-metadata enabled so cross-crate types resolve.
+uniffi = { workspace = true, features = ["cli"] }
