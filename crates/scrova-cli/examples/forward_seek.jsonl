@@ -1,0 +1,5 @@
+{"t":0,"state":"playing","pos":0,"track":{"id":"seek-1","title":"Forward Seek","artist":"Example Artist","duration":200}}
+{"t":10,"state":"playing","pos":10,"track":{"id":"seek-1","title":"Forward Seek","artist":"Example Artist","duration":200}}
+{"t":15,"state":"playing","pos":190,"track":{"id":"seek-1","title":"Forward Seek","artist":"Example Artist","duration":200}}
+{"t":24,"state":"playing","pos":199,"track":{"id":"seek-1","title":"Forward Seek","artist":"Example Artist","duration":200}}
+{"t":30,"state":"stopped"}

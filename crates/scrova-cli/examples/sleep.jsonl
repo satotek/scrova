@@ -1,0 +1,3 @@
+{"t":0,"state":"playing","track":{"id":"sleep-1","title":"Sleep Gap","artist":"Example Artist","duration":200}}
+{"t":28800,"state":"playing","track":{"id":"sleep-1","title":"Sleep Gap","artist":"Example Artist","duration":200}}
+{"t":28805,"state":"stopped"}
