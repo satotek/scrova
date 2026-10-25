@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 rusqlite = { version = "0.41", features = ["bundled"] }
 scrova-core.workspace = true
+serde_json = "1"
 thiserror.workspace = true
 
 [dev-dependencies]

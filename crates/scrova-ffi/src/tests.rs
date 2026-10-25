@@ -499,3 +499,185 @@ async fn restart_dedupe_covers_a_start_that_drifted_with_a_pause() {
     scrova.handle_playback_event(event(125, 215)).unwrap();
     assert_eq!(scrova.pending_count().unwrap(), 1);
 }
+
+fn recent_track(title: &str) -> Track {
+    Track {
+        title: title.into(),
+        artist: "Recent Artist".into(),
+        album: None,
+        album_artist: None,
+        duration: Some(Duration::from_secs(200)),
+        source_track_id: Some(format!("catalog-{title}")),
+    }
+}
+
+fn live_recent_scrobble(session: &str, title: &str, started_at: SystemTime) -> Scrobble {
+    Scrobble {
+        track: recent_track(title),
+        started_at,
+        timestamp_accuracy: TimestampAccuracy::Observed,
+        origin: ScrobbleOrigin::LiveObservation,
+        source: "com.apple.Music".into(),
+        session_id: session.into(),
+    }
+}
+
+#[tokio::test]
+async fn recently_played_first_scan_only_creates_a_baseline() {
+    let (_server, scrova) = setup().await;
+    let items = vec![recent_track("A"), recent_track("B")];
+
+    let report = scrova
+        .recover_recently_played("com.apple.Music".into(), items.clone(), None, None, false)
+        .unwrap();
+    assert_eq!(
+        report,
+        RecoveryReport {
+            baseline_created: true,
+            queued: 0,
+            already_covered: 0,
+        }
+    );
+    assert_eq!(scrova.pending_count().unwrap(), 0);
+
+    let report = scrova
+        .recover_recently_played("com.apple.Music".into(), items, None, None, false)
+        .unwrap();
+    assert_eq!(
+        report,
+        RecoveryReport {
+            baseline_created: false,
+            queued: 0,
+            already_covered: 0,
+        }
+    );
+}
+
+#[tokio::test]
+async fn recently_played_queues_one_new_estimated_play() {
+    let (_server, scrova) = setup().await;
+    scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("A"), recent_track("B")],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+    let report = scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("X"), recent_track("A"), recent_track("B")],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        report,
+        RecoveryReport {
+            baseline_created: false,
+            queued: 1,
+            already_covered: 0,
+        }
+    );
+
+    let records = scrova.recent_scrobbles(10).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].track.title, "X");
+    assert_eq!(records[0].timestamp_accuracy, TimestampAccuracy::Estimated);
+    assert_eq!(records[0].origin, ScrobbleOrigin::HistoryRecovery);
+    assert!(records[0].started_at <= SystemTime::now());
+}
+
+#[tokio::test]
+async fn recently_played_skips_the_currently_playing_song() {
+    let (_server, scrova) = setup().await;
+    scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("A")],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+    let report = scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("X"), recent_track("Y"), recent_track("A")],
+            Some(recent_track("X")),
+            Some(Duration::from_secs(50)),
+            true,
+        )
+        .unwrap();
+    assert_eq!(report.queued, 1);
+
+    let records = scrova.recent_scrobbles(10).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].track.title, "Y");
+}
+
+#[tokio::test]
+async fn recently_played_suppresses_a_known_live_scrobble() {
+    let (_server, scrova) = setup().await;
+    scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("A")],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+    scrova
+        .store
+        .enqueue(&live_recent_scrobble(
+            "live-x",
+            "X",
+            SystemTime::now() - Duration::from_secs(60),
+        ))
+        .unwrap();
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+
+    let report = scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("X"), recent_track("A")],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+    assert_eq!(report.queued, 0);
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn recently_played_same_list_is_idempotent() {
+    let (_server, scrova) = setup().await;
+    scrova
+        .recover_recently_played(
+            "com.apple.Music".into(),
+            vec![recent_track("A")],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+    let items = vec![recent_track("X"), recent_track("A")];
+
+    let first = scrova
+        .recover_recently_played("com.apple.Music".into(), items.clone(), None, None, false)
+        .unwrap();
+    assert_eq!(first.queued, 1);
+
+    let second = scrova
+        .recover_recently_played("com.apple.Music".into(), items, None, None, false)
+        .unwrap();
+    assert_eq!(second.queued, 0);
+    assert_eq!(scrova.pending_count().unwrap(), 1);
+}

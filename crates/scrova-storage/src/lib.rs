@@ -16,10 +16,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params, params_from_iter};
-use scrova_core::{Scrobble, ScrobbleOrigin, TimestampAccuracy, Track};
+use scrova_core::{
+    KnownPlay, Scrobble, ScrobbleOrigin, TimestampAccuracy, Track, recent_played_key_parts,
+};
 use thiserror::Error;
 
-pub use scrova_core::LibraryState;
+pub use scrova_core::{LibraryState, RecentSnapshot};
 
 /// Destination identifier for Last.fm. New services can be added without a
 /// schema migration because destination is part of the delivery key.
@@ -33,7 +35,7 @@ pub const DEFAULT_CLAIM_LIMIT: usize = 50;
 /// after a long failure streak.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(60 * 60);
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const BASE_BACKOFF_SECONDS: u64 = 60;
 /// SQLite's default parameter limit is 999; keep chunks well below it so a
 /// large library snapshot still fits in one query.
@@ -482,6 +484,108 @@ impl Store {
         })
     }
 
+    /// Reads the last MusicKit recently-played snapshot for a source.
+    pub fn recent_snapshot(&self, source: &str) -> Result<Option<RecentSnapshot>> {
+        let row: Option<(String, i64)> = self
+            .connection()
+            .query_row(
+                "SELECT keys_json, taken_at_ms
+                 FROM recent_played_snapshot
+                 WHERE source = ?1",
+                params![source],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        let Some((keys_json, taken_at_ms)) = row else {
+            return Ok(None);
+        };
+        let keys = serde_json::from_str(&keys_json).map_err(|error| StoreError::InvalidField {
+            field: "recent_played_snapshot.keys_json",
+            value: error.to_string(),
+        })?;
+
+        Ok(Some(RecentSnapshot {
+            keys,
+            taken_at: system_time_from_millis(taken_at_ms)?,
+        }))
+    }
+
+    /// Writes only the snapshot. Recovery uses [`Self::apply_recent_played`] so
+    /// a failed enqueue cannot advance the baseline past unqueued plays.
+    pub fn put_recent_snapshot(&self, source: &str, snapshot: &RecentSnapshot) -> Result<()> {
+        let mut connection = self.connection();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        upsert_recent_snapshot(&transaction, source, snapshot)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Persisted plays for a source, used to suppress recovery duplicates.
+    ///
+    /// Keys are normalized the same way as the recent-played planner so a
+    /// catalog ID and a library persistent ID still compare equal by metadata.
+    pub fn known_plays(&self, source: &str, since: SystemTime) -> Result<Vec<KnownPlay>> {
+        let since_ms = system_time_to_millis(since)?;
+        let connection = self.connection();
+        let mut statement = connection.prepare(
+            "SELECT track_artist, track_title, started_at_ms
+             FROM scrobbles
+             WHERE source = ?1 AND started_at_ms >= ?2
+             ORDER BY started_at_ms ASC",
+        )?;
+        let rows = statement.query_map(params![source, since_ms], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+
+        let mut plays = Vec::new();
+        for row in rows {
+            let (artist, title, started_at_ms) = row?;
+            plays.push(KnownPlay {
+                key: recent_played_key_parts(&artist, &title),
+                started_at: system_time_from_millis(started_at_ms)?,
+            });
+        }
+        Ok(plays)
+    }
+
+    /// Applies a recently-played scan atomically: the snapshot and all planned
+    /// scrobbles commit together, mirroring library recovery.
+    pub fn apply_recent_played(
+        &self,
+        source: &str,
+        snapshot: &RecentSnapshot,
+        scrobbles: &[Scrobble],
+    ) -> Result<LibraryScanResult> {
+        let now_ms = now_millis()?;
+        let mut connection = self.connection();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        upsert_recent_snapshot(&transaction, source, snapshot)?;
+
+        let mut queued = 0_usize;
+        let mut already_queued = 0_usize;
+        for scrobble in scrobbles {
+            let (_, inserted) =
+                insert_scrobble(&transaction, scrobble, &[LASTFM_DESTINATION], now_ms)?;
+            if inserted {
+                queued += 1;
+            } else {
+                already_queued += 1;
+            }
+        }
+
+        transaction.commit()?;
+        Ok(LibraryScanResult {
+            queued: u32::try_from(queued).unwrap_or(u32::MAX),
+            already_queued: u32::try_from(already_queued).unwrap_or(u32::MAX),
+        })
+    }
+
     /// Claims pending deliveries for one destination.
     ///
     /// The transaction moves rows to `in_flight` before returning them so two
@@ -868,6 +972,29 @@ fn upsert_library_state(
     Ok(())
 }
 
+fn upsert_recent_snapshot(
+    transaction: &rusqlite::Transaction<'_>,
+    source: &str,
+    snapshot: &RecentSnapshot,
+) -> Result<()> {
+    let keys_json =
+        serde_json::to_string(&snapshot.keys).map_err(|error| StoreError::InvalidField {
+            field: "recent_played_snapshot.keys_json",
+            value: error.to_string(),
+        })?;
+    let taken_at_ms = system_time_to_millis(snapshot.taken_at)?;
+
+    transaction.execute(
+        "INSERT INTO recent_played_snapshot (source, keys_json, taken_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(source) DO UPDATE SET
+             keys_json = excluded.keys_json,
+             taken_at_ms = excluded.taken_at_ms",
+        params![source, keys_json, taken_at_ms],
+    )?;
+    Ok(())
+}
+
 /// Deterministic exponential backoff for a failed attempt count.
 ///
 /// `attempts` is the number of failures already recorded, so the first retry
@@ -904,6 +1031,13 @@ fn migrate(connection: &mut Connection) -> Result<()> {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute_batch(SCHEMA_V2)?;
         transaction.pragma_update(None, "user_version", 2)?;
+        transaction.commit()?;
+    }
+
+    if version < 3 {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(SCHEMA_V3)?;
+        transaction.pragma_update(None, "user_version", 3)?;
         transaction.commit()?;
     }
 
@@ -1202,4 +1336,12 @@ CREATE TABLE library_baseline (
 
 CREATE INDEX idx_scrobbles_track_started
     ON scrobbles (track_source_id, started_at_ms);
+"#;
+
+const SCHEMA_V3: &str = r#"
+CREATE TABLE recent_played_snapshot (
+    source TEXT PRIMARY KEY,
+    keys_json TEXT NOT NULL,
+    taken_at_ms INTEGER NOT NULL
+);
 "#;

@@ -17,9 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use scrova_core::{
-    EngineConfig, EngineOutput, LibraryItem, LibraryState, PlaybackEvent, RecoveryConfig, Scrobble,
-    ScrobbleEngine, ScrobbleOrigin, SessionProgress, TimestampAccuracy, Track, plan_recovery,
-    scrobble_threshold,
+    EngineConfig, EngineOutput, KnownPlay, LibraryItem, LibraryState, NowPlayingHint,
+    PlaybackEvent, RecentPlayedInput, RecoveryConfig, Scrobble, ScrobbleEngine, ScrobbleOrigin,
+    SessionProgress, TimestampAccuracy, Track, plan_recent_played_for_source, plan_recovery,
+    recent_played_key, scrobble_threshold,
 };
 use scrova_lastfm::{
     Credentials, LastfmClient, LastfmError, NowPlaying, RetryClass, ScrobbleOutcome,
@@ -225,6 +226,79 @@ impl Scrova {
     /// send only recently played items after the baseline.
     pub fn library_scanned_at(&self, source: String) -> Result<Option<SystemTime>, ScrovaError> {
         Ok(self.store.library_baseline(&source)?)
+    }
+
+    /// Recovers streamed plays from MusicKit's recently-played list.
+    ///
+    /// MusicKit has no timestamps, so the core planner chains durations
+    /// backwards from `now`. Existing live/library plays are removed before the
+    /// snapshot and queue commit together.
+    pub fn recover_recently_played(
+        &self,
+        source: String,
+        items: Vec<Track>,
+        now_playing: Option<Track>,
+        now_playing_position: Option<Duration>,
+        now_playing_is_playing: bool,
+    ) -> Result<RecoveryReport, ScrovaError> {
+        let now = SystemTime::now();
+        let previous = self.store.recent_snapshot(&source)?;
+        let config = RecoveryConfig::default();
+
+        let known = match previous.as_ref() {
+            Some(previous) => {
+                let since = previous
+                    .taken_at
+                    .checked_sub(Duration::from_secs(60 * 60))
+                    .unwrap_or(UNIX_EPOCH);
+                self.store.known_plays(&source, since)?
+            }
+            None => Vec::new(),
+        };
+
+        let now_playing = now_playing.map(|track| NowPlayingHint {
+            key: recent_played_key(&track),
+            position: now_playing_position,
+            playing: now_playing_is_playing,
+        });
+
+        let plan = plan_recent_played_for_source(
+            RecentPlayedInput {
+                items,
+                previous: previous.clone(),
+                known,
+                now_playing,
+                now,
+                config,
+            },
+            &source,
+        );
+        let baseline_created = previous.is_none();
+
+        // The planner only looks one hour back for known plays. Widen the
+        // duplicate check to the full recovery window so a play already
+        // live-scrobbled or library-recovered earlier is not queued again.
+        let dedupe_since = now.checked_sub(config.max_age).unwrap_or(UNIX_EPOCH);
+        let existing = self.store.known_plays(&source, dedupe_since)?;
+        let mut accepted = Vec::new();
+        let mut already_covered = 0_u32;
+        for scrobble in plan.plays {
+            if has_known_play(&existing, &scrobble) || self.already_scrobbled(&scrobble)? {
+                already_covered = already_covered.saturating_add(1);
+                continue;
+            }
+            accepted.push(scrobble);
+        }
+
+        let result = self
+            .store
+            .apply_recent_played(&source, &plan.snapshot, &accepted)?;
+
+        Ok(RecoveryReport {
+            baseline_created,
+            queued: result.queued,
+            already_covered: already_covered.saturating_add(result.already_queued),
+        })
     }
 
     /// Step 1 of the desktop auth flow: open `url` in a browser, then call
@@ -471,6 +545,23 @@ fn library_state(item: &LibraryItem) -> Option<(String, LibraryState)> {
             last_played_at: item.last_played_at,
         },
     ))
+}
+
+fn has_known_play(existing: &[KnownPlay], scrobble: &Scrobble) -> bool {
+    let key = recent_played_key(&scrobble.track);
+    let threshold =
+        scrobble_threshold(scrobble.track.duration, &EngineConfig::default()).unwrap_or_default();
+    let before = threshold.max(RESTART_DUPLICATE_WINDOW);
+    let Some(from) = scrobble.started_at.checked_sub(before) else {
+        return false;
+    };
+    let Some(to) = scrobble.started_at.checked_add(RESTART_DUPLICATE_WINDOW) else {
+        return false;
+    };
+
+    existing
+        .iter()
+        .any(|known| known.key == key && known.started_at >= from && known.started_at <= to)
 }
 
 /// Broad range of existing scrobbles that could affect this item.

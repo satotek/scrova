@@ -3,7 +3,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use scrova_core::{Scrobble, ScrobbleOrigin, TimestampAccuracy, Track};
 use scrova_storage::{
     DEFAULT_CLAIM_LIMIT, DeliveryState, EnqueueOutcome, HistoryCursor, LASTFM_DESTINATION,
-    LibraryScan, LibraryScanResult, LibraryState, MAX_BACKOFF, QueueId, QueueItem, Store, backoff,
+    LibraryScan, LibraryScanResult, LibraryState, MAX_BACKOFF, QueueId, QueueItem, RecentSnapshot,
+    Store, backoff,
 };
 
 fn at(millis: u64) -> SystemTime {
@@ -448,7 +449,7 @@ fn open_sets_wal_mode_and_schema_version() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 }
 
 #[test]
@@ -458,15 +459,15 @@ fn newer_schema_versions_are_rejected() {
 
     {
         let connection = rusqlite::Connection::open(&path).unwrap();
-        connection.pragma_update(None, "user_version", 3).unwrap();
+        connection.pragma_update(None, "user_version", 4).unwrap();
     }
 
     let error = Store::open(&path).unwrap_err();
     assert!(matches!(
         error,
         scrova_storage::StoreError::UnsupportedSchema {
-            found: 3,
-            supported: 2
+            found: 4,
+            supported: 3
         }
     ));
 }
@@ -766,5 +767,129 @@ fn version_one_databases_are_migrated_in_place() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
+}
+
+#[test]
+fn recent_snapshot_round_trips_per_source() {
+    let store = Store::open_in_memory().unwrap();
+    assert_eq!(store.recent_snapshot("com.apple.Music").unwrap(), None);
+
+    let snapshot = RecentSnapshot {
+        keys: vec!["artist\u{1f}song".to_owned(), "other\u{1f}track".to_owned()],
+        taken_at: at(12_345),
+    };
+    store
+        .put_recent_snapshot("com.apple.Music", &snapshot)
+        .unwrap();
+
+    assert_eq!(
+        store.recent_snapshot("com.apple.Music").unwrap(),
+        Some(snapshot)
+    );
+    assert_eq!(store.recent_snapshot("other.source").unwrap(), None);
+}
+
+#[test]
+fn apply_recent_played_commits_snapshot_and_enqueue_together() {
+    let store = Store::open_in_memory().unwrap();
+    let snapshot = RecentSnapshot {
+        keys: vec!["a\u{1f}x".to_owned()],
+        taken_at: at(5_000),
+    };
+    let scrobble = minimal_sample("recent-1", 5_000);
+
+    let result = store
+        .apply_recent_played(
+            "com.apple.Music",
+            &snapshot,
+            std::slice::from_ref(&scrobble),
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        LibraryScanResult {
+            queued: 1,
+            already_queued: 0,
+        }
+    );
+    assert_eq!(
+        store.recent_snapshot("com.apple.Music").unwrap(),
+        Some(snapshot.clone())
+    );
+    assert_eq!(store.pending_count(LASTFM_DESTINATION).unwrap(), 1);
+
+    let later = RecentSnapshot {
+        keys: vec!["b\u{1f}y".to_owned()],
+        taken_at: at(6_000),
+    };
+    let result = store
+        .apply_recent_played("com.apple.Music", &later, std::slice::from_ref(&scrobble))
+        .unwrap();
+    assert_eq!(
+        result,
+        LibraryScanResult {
+            queued: 0,
+            already_queued: 1,
+        }
+    );
+    assert_eq!(
+        store.recent_snapshot("com.apple.Music").unwrap(),
+        Some(later)
+    );
+    assert_eq!(store.pending_count(LASTFM_DESTINATION).unwrap(), 1);
+}
+
+#[test]
+fn known_plays_returns_normalized_keys_since_a_time() {
+    let store = Store::open_in_memory().unwrap();
+    store.enqueue(&sample("older", 1_000)).unwrap();
+    store.enqueue(&sample("newer", 2_000)).unwrap();
+
+    let known = store.known_plays("com.apple.Music", at(1_500)).unwrap();
+    assert_eq!(known.len(), 1);
+    assert_eq!(known[0].key, "example artist\u{1f}song newer");
+    assert_eq!(known[0].started_at, at(2_000));
+}
+
+#[test]
+fn version_two_databases_are_migrated_in_place() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v2.sqlite3");
+
+    {
+        let store = Store::open(&path).unwrap();
+        store.enqueue(&sample("kept", 1_000)).unwrap();
+    }
+
+    {
+        // Remove only the v3 table and rewind the marker: the rest of the file
+        // is exactly a v2 database with real data to preserve.
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch("DROP TABLE recent_played_snapshot; PRAGMA user_version = 2;")
+            .unwrap();
+    }
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.recent(10).unwrap().len(), 1);
+    assert_eq!(store.recent_snapshot("com.apple.Music").unwrap(), None);
+
+    let snapshot = RecentSnapshot {
+        keys: vec!["a\u{1f}b".to_owned()],
+        taken_at: at(2_000),
+    };
+    store
+        .put_recent_snapshot("com.apple.Music", &snapshot)
+        .unwrap();
+    assert_eq!(
+        store.recent_snapshot("com.apple.Music").unwrap(),
+        Some(snapshot)
+    );
+
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 3);
 }
