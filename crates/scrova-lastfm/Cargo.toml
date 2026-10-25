@@ -14,6 +14,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+# reqwest's rustls feature selects rustls-platform-verifier, which needs a
+# Gradle/JNI component and explicit Android init. Bundled Mozilla roots keep the
+# Rust client self-contained on Android; Apple keeps the platform verifier.
+webpki-root-certs = "1"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"

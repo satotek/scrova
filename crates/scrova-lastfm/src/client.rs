@@ -43,9 +43,24 @@ impl LastfmClient {
     /// `http://127.0.0.1:8080/2.0/`. A trailing slash is optional.
     #[must_use]
     pub fn with_base_url(credentials: Credentials, base_url: impl AsRef<str>) -> Self {
-        let http = Client::builder()
+        let builder = Client::builder()
             // Last.fm asks clients to send an identifiable User-Agent.
-            .user_agent(concat!("scrova-lastfm/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("scrova-lastfm/", env!("CARGO_PKG_VERSION")));
+
+        // reqwest's rustls feature chooses rustls-platform-verifier. On Android
+        // that verifier needs JNI handles and a Gradle-provided Kotlin component
+        // before its first use. Mozilla's bundled roots avoid that extra runtime
+        // setup, while Apple keeps the platform verifier and its system trust
+        // policy unchanged.
+        #[cfg(target_os = "android")]
+        let builder = builder.tls_certs_only(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().map(
+            |certificate| {
+                reqwest::Certificate::from_der(certificate.as_ref())
+                    .expect("bundled Mozilla root must be valid DER")
+            },
+        ));
+
+        let http = builder
             .build()
             .expect("reqwest client configuration should be valid");
 
