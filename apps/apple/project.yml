@@ -1,0 +1,128 @@
+name: Scrova
+options:
+  bundleIdPrefix: dev.satotek
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  developmentLanguage: en
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Signing lives in Config/Base.xcconfig so a missing team stays ad-hoc.
+    # A value here would override the xcconfig and break that fallback.
+
+packages:
+  ScrovaKit:
+    path: ScrovaKit
+
+targets:
+  Scrova:
+    type: application
+    platform: macOS
+    sources:
+      - path: macOS
+        excludes:
+          - Info.plist
+          - "*.entitlements"
+      - path: Shared
+    dependencies:
+      - package: ScrovaKit
+        product: ScrovaKit
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.satotek.scrova
+        PRODUCT_NAME: Scrova
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: macOS/Scrova.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+    info:
+      path: macOS/Info.plist
+      properties:
+        CFBundleDisplayName: Scrova
+        CFBundleName: Scrova
+        LSApplicationCategoryType: public.app-category.music
+        LSUIElement: true
+        NSAppleEventsUsageDescription: Scrova reads the track playing in Music so it can scrobble what you listen to.
+        NSPrincipalClass: NSApplication
+        ScrovaLastfmApiKey: "$(LASTFM_API_KEY)"
+        ScrovaLastfmSharedSecret: "$(LASTFM_SHARED_SECRET)"
+
+  ScrovaiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: iOS
+        excludes:
+          - Info.plist
+      - path: Shared
+    dependencies:
+      - package: ScrovaKit
+        product: ScrovaKit
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.satotek.scrova.ios
+        PRODUCT_NAME: Scrova
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # ScrovaFFI.xcframework ships an arm64 simulator slice only.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+    info:
+      path: iOS/Info.plist
+      properties:
+        CFBundleDisplayName: Scrova
+        CFBundleName: Scrova
+        LSRequiresIPhoneOS: true
+        NSAppleMusicUsageDescription: Scrova reads the track playing in Music so it can scrobble what you listen to.
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.satotek.scrova.ios.flush
+        UIBackgroundModes:
+          - fetch
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        ScrovaLastfmApiKey: "$(LASTFM_API_KEY)"
+        ScrovaLastfmSharedSecret: "$(LASTFM_SHARED_SECRET)"
+
+schemes:
+  Scrova:
+    build:
+      targets:
+        Scrova: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  ScrovaiOS:
+    build:
+      targets:
+        ScrovaiOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
