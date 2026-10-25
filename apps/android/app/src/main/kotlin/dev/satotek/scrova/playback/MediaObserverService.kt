@@ -11,6 +11,7 @@ import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.util.Log
 import dev.satotek.scrova.scrovaApp
@@ -49,6 +50,9 @@ class MediaObserverService : NotificationListenerService() {
         var artworkKey: String? = null,
         var artwork: Bitmap? = null,
         var tint: Int? = null,
+        var trackKey: String? = null,
+        /** elapsedRealtime of the last track change; see PlaybackSnapshot.event. */
+        var trackChangedAt: Long = 0,
     )
 
     private val sessionsChanged = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
@@ -148,7 +152,12 @@ class MediaObserverService : NotificationListenerService() {
     }
 
     private fun report(observed: Observed) {
-        val event = PlaybackSnapshot.event(observed.controller)
+        val key = PlaybackSnapshot.trackKey(observed.controller.metadata)
+        if (observed.trackKey != null && key != observed.trackKey) {
+            observed.trackChangedAt = SystemClock.elapsedRealtime()
+        }
+        observed.trackKey = key
+        val event = PlaybackSnapshot.event(observed.controller, observed.trackChangedAt)
         updateArtwork(observed, event)
         if (event.state == CoreState.PLAYING) {
             primary = observed.controller.sessionToken
@@ -195,7 +204,7 @@ class MediaObserverService : NotificationListenerService() {
     private fun publish() {
         val token = primary ?: sessions.keys.firstOrNull()
         val observed = token?.let(sessions::get)
-        val event = observed?.let { PlaybackSnapshot.event(it.controller) }
+        val event = observed?.let { PlaybackSnapshot.event(it.controller, it.trackChangedAt) }
         val track = event?.track
         if (observed == null || track == null) {
             PlaybackRepository.publish(null)

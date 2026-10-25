@@ -12,14 +12,21 @@ import uniffi.scrova_core.PlaybackState as CoreState
 
 /** Converts a media session's current state into the engine's snapshot type. */
 internal object PlaybackSnapshot {
-    fun event(controller: MediaController, now: Instant = Instant.now()): PlaybackEvent {
+    /**
+     * [positionValidAfter] is the elapsedRealtime at which the track last
+     * changed. Players can keep reporting the previous track's position for a
+     * moment after switching metadata; a position not updated since then is
+     * dropped rather than mistaken for progress into the new track.
+     */
+    fun event(controller: MediaController, positionValidAfter: Long = 0, now: Instant = Instant.now()): PlaybackEvent {
         val playback = controller.playbackState
         val state = state(playback)
         val track = if (state == CoreState.STOPPED) null else track(controller.metadata)
+        val fresh = playback != null && playback.lastPositionUpdateTime >= positionValidAfter
         return PlaybackEvent(
             track = track,
             state = if (track == null) CoreState.STOPPED else state,
-            position = track?.let { position(playback) },
+            position = track?.takeIf { fresh }?.let { position(playback) },
             source = controller.packageName,
             observedAt = now,
         )
@@ -72,6 +79,10 @@ internal object PlaybackSnapshot {
             sourceTrackId = metadata.text(MediaMetadata.METADATA_KEY_MEDIA_ID),
         )
     }
+
+    /** Same identity rule as the engine uses for tracks without an ID. */
+    fun trackKey(metadata: MediaMetadata?): String? =
+        track(metadata)?.let { it.sourceTrackId ?: "${it.artist}\u001f${it.title}" }
 
     private fun MediaMetadata.text(key: String): String? =
         getString(key)?.trim()?.takeIf { it.isNotEmpty() }
