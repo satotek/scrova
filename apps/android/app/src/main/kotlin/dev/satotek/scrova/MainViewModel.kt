@@ -9,6 +9,9 @@ import dev.satotek.scrova.account.signIn
 import dev.satotek.scrova.playback.PlaybackRepository
 import dev.satotek.scrova.sync.FlushScheduler
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +21,7 @@ import uniffi.scrova_ffi.ScrobbleRecord
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val scrova = app.scrovaApp.scrova
     private val signIn = app.signIn
+    private var queueRefresh: Job? = null
 
     val nowPlaying = PlaybackRepository.nowPlaying
     val signInState = signIn.state
@@ -65,9 +69,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun sendNow() = FlushScheduler.flushSoon(getApplication())
 
     private fun refreshQueue() {
-        runCatching {
-            recentState.value = scrova.recentScrobbles(RECENT_LIMIT)
-            pendingState.value = scrova.pendingCount()
+        if (queueRefresh?.isActive == true) return
+        queueRefresh = viewModelScope.launch {
+            runCatching {
+                // SQLite work must not block navigation or the progress animation.
+                val (records, count) = withContext(Dispatchers.IO) {
+                    scrova.recentScrobbles(RECENT_LIMIT) to scrova.pendingCount()
+                }
+                recentState.value = records
+                pendingState.value = count
+            }
         }
     }
 

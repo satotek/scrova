@@ -1,4 +1,7 @@
 import java.util.Properties
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
 
 plugins {
     alias(libs.plugins.android.application)
@@ -94,12 +97,62 @@ tasks.named("preBuild") {
     dependsOn(checkUniffiBindings)
 }
 
+// Both phone apps ship the same policy and Rust inventory, without a second
+// checked-in copy that could silently drift from the source documents.
+abstract class BundleSharedAssets : DefaultTask() {
+    @get:InputFile abstract val privacy: RegularFileProperty
+    @get:InputFile abstract val rustLicenses: RegularFileProperty
+    @get:Input abstract val androidLicenses: Property<String>
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction fun generate() {
+        check(groovy.json.JsonSlurper().parse(rustLicenses.get().asFile) is List<*>) {
+            "The Rust license inventory must be a JSON array."
+        }
+        val directory = outputDirectory.get().asFile.apply { mkdirs() }
+        privacy.get().asFile.copyTo(directory.resolve("privacy-policy.md"), overwrite = true)
+        rustLicenses.get().asFile.copyTo(directory.resolve("licenses-rust.json"), overwrite = true)
+        directory.resolve("licenses-android.json").writeText(androidLicenses.get())
+    }
+}
+
+// The platform inventory deliberately covers direct runtime dependencies only.
+// Resolve versions from Gradle rather than duplicating pins in a hand-edited
+// JSON; new vendors must have their license reviewed here before they ship.
+androidComponents.onVariants { variant ->
+    val runtimeLibraries = variant.runtimeConfiguration
+    val bundleSharedAssets = tasks.register<BundleSharedAssets>("bundle${variant.name.replaceFirstChar { it.uppercase() }}SharedAssets") {
+        privacy.set(rootProject.layout.projectDirectory.file("../../docs/privacy-policy.md"))
+        rustLicenses.set(rootProject.layout.projectDirectory.file("../common/licenses-rust.json"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/sharedAssets/${variant.name}"))
+        inputs.files(runtimeLibraries)
+        androidLicenses.set(providers.provider {
+            val entries = runtimeLibraries.resolvedConfiguration.firstLevelModuleDependencies
+                .filter { it.moduleName != "compose-bom" }
+                .map { dependency ->
+                    val group = dependency.moduleGroup
+                    val (license, repository) = when {
+                        group.startsWith("androidx.") -> "Apache-2.0" to "https://android.googlesource.com/platform/frameworks/support"
+                        group.startsWith("org.jetbrains.kotlinx") -> "Apache-2.0" to "https://github.com/Kotlin/kotlinx.coroutines"
+                        group.startsWith("org.jetbrains.kotlin") -> "Apache-2.0" to "https://github.com/JetBrains/kotlin"
+                        group == "net.java.dev.jna" -> "LGPL-2.1-or-later OR Apache-2.0" to "https://github.com/java-native-access/jna"
+                        else -> error("Review the Android license for $group:${dependency.moduleName}")
+                    }
+                    mapOf("name" to "$group:${dependency.moduleName}", "version" to dependency.moduleVersion, "license" to license, "repository" to repository)
+                }.sortedBy { it["name"] }
+            groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(entries))
+        })
+    }
+    variant.sources.assets?.addGeneratedSourceDirectory(bundleSharedAssets) { it.outputDirectory }
+}
+
 dependencies {
     implementation(libs.androidx.datastore.core)
     testImplementation(libs.junit)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.activity.compose)

@@ -3,6 +3,7 @@ package dev.satotek.scrova.ui
 import android.graphics.Bitmap
 import android.text.format.DateUtils
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,8 +18,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.satotek.scrova.R
 import dev.satotek.scrova.playback.ArtworkCache
@@ -47,6 +54,7 @@ import uniffi.scrova_ffi.ScrobbleRecord
 @Composable
 fun RecentScrobbleCard(record: ScrobbleRecord, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    var menu by remember { mutableStateOf(false) }
     val artwork by produceState<Bitmap?>(null, record.track) {
         value = withContext(Dispatchers.IO) { ArtworkCache.load(context, record.track) }
     }
@@ -57,7 +65,12 @@ fun RecentScrobbleCard(record: ScrobbleRecord, modifier: Modifier = Modifier) {
     val status = status(record.status)
 
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().combinedClickable(
+            onClick = {},
+            onLongClick = if (record.status is DeliveryStatus.Submitted) ({ menu = true }) else null,
+            onLongClickLabel = "Open on Last.fm",
+        ),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -78,6 +91,32 @@ fun RecentScrobbleCard(record: ScrobbleRecord, modifier: Modifier = Modifier) {
                     }
                     status?.let { (text, color) -> Text(text, style = small, color = color ?: MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Open on Last.fm") }, onClick = {
+                        menu = false
+                        openExternal(context, lastfmTrackUrl(record.track.artist, record.track.title))
+                    })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun LastScrobbled(record: ScrobbleRecord, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val artwork by produceState<Bitmap?>(null, record.track) {
+        value = withContext(Dispatchers.IO) { ArtworkCache.load(context, record.track) }
+    }
+    val relative = DateUtils.getRelativeTimeSpanString(record.startedAt.toEpochMilli()).toString()
+    Card(onClick = onClick, shape = MaterialTheme.shapes.large) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Cover(artwork, 40)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Last scrobbled", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(record.track.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(relative, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                status(record.status)?.let { Text(it.first, style = MaterialTheme.typography.labelSmall, color = it.second ?: MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }

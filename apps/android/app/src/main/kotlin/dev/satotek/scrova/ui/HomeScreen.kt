@@ -1,11 +1,5 @@
 package dev.satotek.scrova.ui
 
-import android.app.Activity
-import android.content.ComponentName
-import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,16 +11,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,54 +33,46 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.satotek.scrova.MainViewModel
 import dev.satotek.scrova.R
 import dev.satotek.scrova.account.SignInState
-import dev.satotek.scrova.playback.MediaObserverService
 import dev.satotek.scrova.playback.NowPlaying
 import uniffi.scrova_core.PlaybackState
 
 @Composable
-fun HomeScreen(model: MainViewModel) {
+fun HomeScreen(model: MainViewModel, onHistory: () -> Unit, onSettings: () -> Unit) {
     val nowPlaying by model.nowPlaying.collectAsState()
     val recent by model.recent.collectAsState()
-    val pending by model.pending.collectAsState()
+    val signIn by model.signInState.collectAsState()
     val access by model.notificationAccess.collectAsState()
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+    // A fixed layout: this is the screen people glance at while listening, so
+    // everything fits at once and the artwork gives way to the text instead of
+    // pushing it off screen.
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (!access) {
-            item { AccessCard() }
-        }
-        item { NowPlayingSection(nowPlaying, Modifier.padding(bottom = 18.dp)) }
-        item {
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.Bottom) {
-                Text("Recent scrobbles", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                if (pending > 0u) {
-                    Text("$pending waiting to send", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Nothing can be shown until access is on, so the card is the screen.
+            AccessCard()
+            Spacer(Modifier.weight(1f))
+        } else {
+            if (signIn !is SignInState.SignedIn) {
+                TextButton(onClick = onSettings, contentPadding = PaddingValues(0.dp)) {
+                    Text("Sign in to Last.fm in Settings to send scrobbles.")
                 }
             }
+            NowPlayingSection(nowPlaying, Modifier.weight(1f))
         }
-        if (recent.isEmpty()) {
-            item {
-                Text(
-                    "Tracks appear here once you’ve listened to half of them, or four minutes.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
-            items(recent) { RecentScrobbleCard(it) }
-        }
-        item { AccountSection(model, Modifier.padding(top = 18.dp)) }
+        recent.firstOrNull()?.let { record -> LastScrobbled(record, onHistory) }
     }
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 private fun NowPlayingSection(nowPlaying: NowPlaying?, modifier: Modifier = Modifier) {
     val accent = nowPlaying?.tint?.let(::Color) ?: MaterialTheme.colorScheme.primary
     Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -108,9 +90,12 @@ private fun NowPlayingSection(nowPlaying: NowPlaying?, modifier: Modifier = Modi
             }
             return@Column
         }
+        // Only the artwork flexes: it takes the height the text and timeline
+        // leave, staying square and never wider than the screen.
         val paused = nowPlaying.progress?.state == PlaybackState.PAUSED
         Box(
-            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(16.dp))
+            Modifier.weight(1f, fill = false).align(Alignment.CenterHorizontally)
+                .aspectRatio(1f, matchHeightConstraintsFirst = true).clip(MaterialTheme.shapes.extraLargeIncreased)
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
@@ -127,12 +112,12 @@ private fun NowPlayingSection(nowPlaying: NowPlaying?, modifier: Modifier = Modi
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(nowPlaying.track.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text(nowPlaying.track.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (nowPlaying.track.artist.isNotEmpty()) {
-                Text(nowPlaying.track.artist, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(nowPlaying.track.artist, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             nowPlaying.track.album?.takeIf { it.isNotEmpty() }?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             // Several apps can play on Android, so say which one this is; set
             // apart from the album so the two are not read as one line of metadata.
@@ -151,9 +136,9 @@ private fun NowPlayingSection(nowPlaying: NowPlaying?, modifier: Modifier = Modi
 }
 
 @Composable
-private fun AccessCard() {
+internal fun AccessCard() {
     val context = LocalContext.current
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Scrova can’t see your music apps yet", style = MaterialTheme.typography.titleMedium)
             Text(
@@ -161,68 +146,15 @@ private fun AccessCard() {
                     "music apps are playing; Scrova does not read your notifications.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Button(onClick = {
-                val component = ComponentName(context, MediaObserverService::class.java)
-                val detail = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
-                        .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component.flattenToString())
-                } else {
-                    null
-                }
-                val fallback = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                runCatching { context.startActivity(detail ?: fallback) }
-                    .onFailure { context.startActivity(fallback) }
-            }) { Text("Open notification access settings") }
+            Button(onClick = { openNotificationSettings(context) }) { Text("Open notification access settings") }
             // Sideloaded apps hit Android's restricted settings: the switch is
             // greyed out until the user allows it from App info.
             Text(
                 "If the switch is greyed out, open App info, tap ⋮ and choose Allow restricted settings.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = {
-                context.startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
-                )
-            }) { Text("Open App info") }
-        }
-    }
-}
-
-@Composable
-private fun AccountSection(model: MainViewModel, modifier: Modifier = Modifier) {
-    val state by model.signInState.collectAsState()
-    val notice by model.signInNotice.collectAsState()
-    val activity = LocalContext.current as Activity
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Last.fm", style = MaterialTheme.typography.titleSmall)
-        when (val current = state) {
-            SignInState.SignedOut -> {
-                Button(onClick = { model.signIn(activity) }, enabled = model.hasLastfmCredentials) { Text("Sign in to Last.fm") }
-                if (!model.hasLastfmCredentials) {
-                    Text("This build has no Last.fm API key, so it cannot sign in.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            is SignInState.AwaitingApproval -> {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text("Approve Scrova on Last.fm", style = MaterialTheme.typography.bodyLarge)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { model.reopenApproval(activity) }) { Text("Open approval page again") }
-                    TextButton(onClick = model::cancelSignIn) { Text("Cancel") }
-                }
-            }
-            is SignInState.SignedIn -> {
-                Text("Scrobbling as ${current.username}", style = MaterialTheme.typography.bodyLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = model::sendNow) { Text("Send now") }
-                    TextButton(onClick = { model.signOut() }) { Text("Sign out") }
-                }
-            }
-        }
-        notice?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { openAppInfo(context) }) { Text("Open App info") }
         }
     }
 }
