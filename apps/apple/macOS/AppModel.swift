@@ -22,6 +22,9 @@ final class AppModel {
     private var flushTimer: Timer?
     private var approvalTask: Task<Void, Never>?
 
+    /// Shared by the menu and the separate History window.
+    let history: HistoryPager
+
     private(set) var currentTrack: Track?
     private(set) var artwork: NSImage?
     private(set) var tint: Color?
@@ -49,12 +52,15 @@ final class AppModel {
     }
 
     init() {
+        let core: Scrova?
         do {
-            scrova = try Scrova(config: ScrovaSetup.makeConfig())
+            core = try Scrova(config: ScrovaSetup.makeConfig())
         } catch {
-            scrova = nil
+            core = nil
             setupFailure = "Scrova could not start: \(error.localizedDescription)"
         }
+        scrova = core
+        history = HistoryPager(scrova: core)
 
         restoreSession()
         refreshQueue()
@@ -246,6 +252,7 @@ final class AppModel {
         guard let scrova else { return }
         recentScrobbles = (try? scrova.recentScrobbles(limit: 10)) ?? []
         pendingCount = (try? scrova.pendingCount()) ?? 0
+        history.invalidate()
     }
 
     private static func notice(for status: SMAppService.Status) -> String? {

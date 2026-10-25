@@ -12,5 +12,14 @@ struct ScrovaApp: App {
                 .accessibilityLabel("Scrova")
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(model: model)
+        }
+
+        Window("History", id: "history") {
+            HistoryWindowView(model: model)
+        }
+        .defaultSize(width: 560, height: 720)
     }
 }

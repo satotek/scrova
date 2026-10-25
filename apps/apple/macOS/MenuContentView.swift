@@ -10,6 +10,8 @@ struct MenuContentView: View {
 
     @State private var recentHeight: CGFloat = 0
 
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.automationDenied {
@@ -158,6 +160,12 @@ struct MenuContentView: View {
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: min(recentHeight, Self.recentMaxHeight))
             }
+
+            Button("Show all history") {
+                openWindow(id: "history")
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
         }
     }
 
@@ -181,56 +189,21 @@ struct MenuContentView: View {
 
     @ViewBuilder
     private var account: some View {
-        switch model.account {
-        case .signedOut:
+        // Account details and sign-out live in Settings; the menu only offers
+        // the one action that makes sense before there is an account.
+        if case .signedOut = model.account {
             Button("Sign in to Last.fm", action: model.signIn)
                 .buttonStyle(.borderedProminent)
                 .disabled(!ScrovaSetup.hasLastfmCredentials)
-        case .awaitingApproval:
-            ProgressView()
-                .controlSize(.small)
-            Text("Approve Scrova in your browser")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        case .signedIn(let username):
-            Image(systemName: "person.crop.circle")
-                .foregroundStyle(.secondary)
-            Text(username)
-                .font(.callout)
-                .lineLimit(1)
-            if model.isSending {
-                ProgressView()
-                    .controlSize(.mini)
-            }
         }
     }
 
     private var settingsMenu: some View {
         Menu {
-            switch model.account {
-            case .signedOut:
-                EmptyView()
-            case .awaitingApproval:
-                Button("Open Approval Page Again", action: model.reopenApprovalPage)
-                Button("Cancel Sign-In", action: model.cancelSignIn)
-                Divider()
-            case .signedIn(let username):
-                Button("Send Now", action: model.flush)
-                    .disabled(model.isSending || model.pendingCount == 0)
-                if let profile = URL(string: "https://www.last.fm/user/\(username)") {
-                    Link("Open Last.fm Profile", destination: profile)
-                }
-                Button("Sign Out", action: model.signOut)
-                Divider()
+            SettingsLink {
+                Text("Settings…")
             }
-            Toggle(
-                "Launch at Login",
-                isOn: Binding(
-                    get: { model.launchesAtLogin },
-                    set: { model.setLaunchesAtLogin($0) }
-                )
-            )
+            .keyboardShortcut(",", modifiers: .command)
             Divider()
             Button("Quit Scrova", action: model.quit)
                 .keyboardShortcut("q")
