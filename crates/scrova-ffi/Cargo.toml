@@ -1,0 +1,27 @@
+[package]
+name = "scrova-ffi"
+description = "UniFFI bindings for Scrova (Swift / Kotlin)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "scrova_ffi"
+# staticlib: Apple 向け XCFramework / lib: cargo test 用 / cdylib: Android(JNI) と bindgen の library mode 用
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+scrova-core = { workspace = true, features = ["uniffi"] }
+scrova-lastfm.workspace = true
+scrova-storage.workspace = true
+thiserror.workspace = true
+tokio = { version = "1", features = ["sync"] }
+# reqwest futures need a Tokio reactor; UniFFI drives them on one.
+uniffi = { workspace = true, features = ["tokio"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

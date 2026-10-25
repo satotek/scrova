@@ -1,0 +1,5 @@
+# All crates share one C module so that a single modulemap in
+# ScrovaFFI.xcframework serves every generated Swift file.
+[bindings.swift]
+ffi_module_name = "ScrovaFFI"
+ffi_module_filename = "scrova_ffiFFI"
