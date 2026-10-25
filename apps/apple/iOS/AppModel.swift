@@ -31,6 +31,8 @@ final class AppModel {
     private(set) var tint: Color?
     private(set) var progress: SessionProgress?
     private(set) var playbackState: PlaybackState = .stopped
+    @ObservationIgnored private var foreground = false
+    @ObservationIgnored private var isRecovering = false
     private(set) var recentScrobbles: [ScrobbleRecord] = []
     private(set) var pendingCount: UInt64 = 0
     private(set) var account: Account = .signedOut
@@ -91,7 +93,18 @@ final class AppModel {
     }
 
     func setForeground(_ isForeground: Bool) {
+        let returning = isForeground && !foreground
+        foreground = isForeground
         observer.setForeground(isForeground)
+        // The process often survives in the background, so launch is not the
+        // only time to look for plays made while away: a walk with the screen
+        // off ends with the app being brought back, not relaunched.
+        if returning {
+            Task {
+                await recoverHistory()
+                flush()
+            }
+        }
     }
 
     func signIn() {
@@ -151,7 +164,10 @@ final class AppModel {
     /// Queues plays that happened while Scrova was closed. Safe to repeat: Rust
     /// derives each recovered scrobble's ID from the track and start time.
     func recoverHistory() async {
-        guard let scrova, MPMediaLibrary.authorizationStatus() == .authorized else { return }
+        guard let scrova, MPMediaLibrary.authorizationStatus() == .authorized, !isRecovering else { return }
+        // Launch and the first foreground transition both ask; one scan suffices.
+        isRecovering = true
+        defer { isRecovering = false }
         do {
             let baseline = try scrova.libraryScannedAt(source: NowPlayingObserver.source)
             // A large library takes a while to enumerate; keep it off the main actor.
