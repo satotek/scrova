@@ -1,0 +1,19 @@
+[package]
+name = "scrova-lastfm"
+description = "Last.fm Scrobbling 2.0 client for Scrova"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+md-5 = "0.11"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
