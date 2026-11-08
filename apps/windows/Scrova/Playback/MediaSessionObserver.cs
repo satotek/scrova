@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Windows.Media.Control;
+using Windows.Storage.Streams;
 
 namespace Scrova.Playback;
 
@@ -26,6 +27,8 @@ public sealed class MediaSessionObserver : IDisposable
 {
     private static readonly TimeSpan TimelineRefreshInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan WinRtCallTimeout = TimeSpan.FromSeconds(5);
+    // Covers are usually tens to hundreds of KB; anything far larger is not worth decoding.
+    private const ulong MaxArtworkBytes = 8 * 1024 * 1024;
 
     [Flags]
     private enum Dirty
@@ -50,7 +53,10 @@ public sealed class MediaSessionObserver : IDisposable
     private bool _disposed;
 
     // Last metadata read from _session; re-read only when MediaPropertiesChanged fires.
-    private (string? Title, string? Artist, string? Album) _media;
+    // Its artwork array is reused by every timeline tick, so those snapshots compare by reference.
+    private MediaInfo _media;
+
+    private readonly record struct MediaInfo(string? Title, string? Artist, string? Album, byte[]? Artwork);
 
     public MediaSessionObserver()
     {
@@ -178,7 +184,7 @@ public sealed class MediaSessionObserver : IDisposable
         {
             if (dirty.HasFlag(Dirty.Media))
             {
-                _media = await ReadMediaAsync(session).ConfigureAwait(false);
+                _media = await ReadMediaAsync(session, _media.Artwork).ConfigureAwait(false);
             }
 
             Publish(BuildSnapshot(session, _media));
@@ -295,8 +301,9 @@ public sealed class MediaSessionObserver : IDisposable
 
     // ---- Reading a session ----
 
-    private static async Task<(string? Title, string? Artist, string? Album)> ReadMediaAsync(
-        GlobalSystemMediaTransportControlsSession session)
+    private static async Task<MediaInfo> ReadMediaAsync(
+        GlobalSystemMediaTransportControlsSession session,
+        byte[]? previousArtwork)
     {
         // Some apps never complete this call; don't let one wedge the refresh loop.
         var props = await session.TryGetMediaPropertiesAsync().AsTask().WaitAsync(WinRtCallTimeout).ConfigureAwait(false);
@@ -305,15 +312,69 @@ public sealed class MediaSessionObserver : IDisposable
             return default;
         }
 
-        return (
-            NullIfBlank(props.Title),
+        var title = NullIfBlank(props.Title);
+        var artwork = title is null ? null : await TryReadArtworkAsync(props.Thumbnail).ConfigureAwait(false);
+        if (MediaSessionSnapshot.SameArtwork(artwork, previousArtwork))
+        {
+            // Same cover re-read (e.g. a metadata-only change): keep the old array so the
+            // UI does not decode it again and later comparisons stay reference-cheap.
+            artwork = previousArtwork;
+        }
+
+        return new MediaInfo(
+            title,
             NullIfBlank(props.Artist) ?? NullIfBlank(props.AlbumArtist),
-            NullIfBlank(props.AlbumTitle));
+            NullIfBlank(props.AlbumTitle),
+            artwork);
+    }
+
+    /// <summary>
+    /// Copies the session thumbnail into memory. A missing, empty, oversized or unreadable
+    /// thumbnail yields null; artwork never fails the metadata read.
+    /// </summary>
+    private static async Task<byte[]?> TryReadArtworkAsync(IRandomAccessStreamReference? thumbnail)
+    {
+        if (thumbnail is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = await thumbnail.OpenReadAsync().AsTask().WaitAsync(WinRtCallTimeout).ConfigureAwait(false);
+            var size = stream.Size;
+            if (size == 0 || size > MaxArtworkBytes)
+            {
+                Log($"ignoring artwork of {size} bytes");
+                return null;
+            }
+
+            var buffer = new Windows.Storage.Streams.Buffer((uint)size);
+            var read = await stream.ReadAsync(buffer, (uint)size, InputStreamOptions.None)
+                .AsTask().WaitAsync(WinRtCallTimeout).ConfigureAwait(false);
+            if (read.Length == 0)
+            {
+                return null;
+            }
+
+            var bytes = new byte[read.Length];
+            using (var reader = DataReader.FromBuffer(read))
+            {
+                reader.ReadBytes(bytes);
+            }
+
+            return bytes;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log($"artwork read failed: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
     }
 
     private static MediaSessionSnapshot BuildSnapshot(
         GlobalSystemMediaTransportControlsSession session,
-        (string? Title, string? Artist, string? Album) media)
+        MediaInfo media)
     {
         var playback = session.GetPlaybackInfo();
         var state = playback?.PlaybackStatus switch
@@ -340,7 +401,8 @@ public sealed class MediaSessionObserver : IDisposable
             TryGetAppId(session),
             state,
             position,
-            duration);
+            duration,
+            media.Title is null ? null : media.Artwork);
     }
 
     private static (TimeSpan? Position, TimeSpan? Duration) ReadTimeline(
