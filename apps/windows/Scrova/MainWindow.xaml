@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Scrova.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Scrova">
+
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
+    <!-- Placeholder Now Playing view. Not wired to GSMTC or the Rust core yet. -->
+    <Grid Padding="32">
+        <StackPanel
+            MaxWidth="360"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Spacing="16">
+
+            <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Now Playing" />
+
+            <Border
+                Width="240"
+                Height="240"
+                HorizontalAlignment="Center"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <FontIcon
+                    FontSize="64"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    Glyph="&#xE8D6;" />
+            </Border>
+
+            <StackPanel Spacing="2">
+                <TextBlock
+                    x:Name="TitleText"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="Nothing playing"
+                    TextTrimming="CharacterEllipsis" />
+                <TextBlock
+                    x:Name="ArtistText"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="Start playback in any app that supports media controls."
+                    TextWrapping="Wrap" />
+            </StackPanel>
+
+            <ProgressBar x:Name="PlaybackProgress" Value="0" />
+
+            <TextBlock
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                Style="{StaticResource CaptionTextBlockStyle}"
+                Text="Not signed in to Last.fm" />
+        </StackPanel>
+    </Grid>
+</Window>

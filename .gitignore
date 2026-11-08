@@ -34,3 +34,9 @@ DerivedData/
 /apps/android/**/build/
 /apps/android/**/.cxx/
 *.iml
+
+# Windows (.NET / WinUI) build outputs
+/apps/windows/**/bin/
+/apps/windows/**/obj/
+/apps/windows/.vs/
+/apps/windows/**/*.user
