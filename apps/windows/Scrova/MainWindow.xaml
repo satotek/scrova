@@ -9,7 +9,7 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <!-- Placeholder Now Playing view. Not wired to GSMTC or the Rust core yet. -->
+    <!-- Placeholder Now Playing view, fed by GSMTC (MediaSessionObserver). Not wired to the Rust core yet. -->
     <Grid Padding="32">
         <StackPanel
             MaxWidth="360"
@@ -44,9 +44,29 @@
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                     Text="Start playback in any app that supports media controls."
                     TextWrapping="Wrap" />
+                <TextBlock
+                    x:Name="AlbumText"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    Visibility="Collapsed" />
             </StackPanel>
 
-            <ProgressBar x:Name="PlaybackProgress" Value="0" />
+            <StackPanel Spacing="4">
+                <ProgressBar x:Name="PlaybackProgress" Value="0" />
+                <Grid x:Name="PlaybackDetails" Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="StateText"
+                        Margin="0,0,64,0"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="TimeText"
+                        HorizontalAlignment="Right"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}" />
+                </Grid>
+            </StackPanel>
 
             <TextBlock
                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
